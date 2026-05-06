@@ -130,7 +130,7 @@ class RunListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Run
-        fields = ["id", "project", "project_name", "status", "started_at", "finished_at", "created_at"]
+        fields = ["id", "project", "project_name", "status", "config_snapshot", "started_at", "finished_at", "created_at"]
 
 
 class RunDetailSerializer(serializers.ModelSerializer):

@@ -19,11 +19,11 @@ import { BarChart3, Loader2, Play } from 'lucide-react';
 const STRATEGIES = ['zero_shot', 'chain_of_thought', 'few_shot_static', 'few_shot_dynamic'];
 const CONTEXT_MODES = ['minimal', 'local', 'module', 'full'];
 
-function generateMatrix(agentId: string = 'claude-code') {
+function generateMatrix(agentId: string, modelId: string) {
   const matrix: Record<string, string>[] = [];
   for (const strategy of STRATEGIES) {
     for (const mode of CONTEXT_MODES) {
-      matrix.push({ prompt_strategy: strategy, context_mode: mode, agent_id: agentId });
+      matrix.push({ prompt_strategy: strategy, context_mode: mode, agent_id: agentId, model_id: modelId });
     }
   }
   return matrix;
@@ -34,7 +34,14 @@ export default function SweepPage() {
   const projectId = params.id as string;
   const [sweepId, setSweepId] = useState<string | null>(null);
   const [enabled, setEnabled] = useState<boolean[]>(Array(16).fill(true));
-  const matrix = generateMatrix();
+
+  const { data: project } = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
+
+  // Use the agent configured on the project (from the first stage config), falling back to 'claude-code'
+  const projectAgent = project?.agents?.[0];
+  const agentId = projectAgent?.agent_id || 'claude-code';
+  const modelId = projectAgent?.model_id || '';
+  const matrix = generateMatrix(agentId, modelId);
 
   const { data: sweep } = useQuery({
     queryKey: ['sweep', sweepId],
@@ -51,10 +58,11 @@ export default function SweepPage() {
     onSuccess: (data) => setSweepId(data.id),
   });
 
-  const completedRuns = sweep?.runs?.filter((r) => r.status === 'succeeded').length || 0;
-  const totalRuns = sweep?.runs?.length || 0;
   const enabledCount = enabled.filter(Boolean).length;
-  const progressPct = totalRuns > 0 ? (completedRuns / totalRuns) * 100 : 0;
+  const finishedRuns = sweep?.runs?.filter((r) => ['succeeded', 'failed', 'cancelled'].includes(r.status)).length || 0;
+  const totalConfigs = sweep?.matrix?.length || enabledCount;
+  const activeRun = sweep?.runs?.find((r) => r.status === 'running');
+  const progressPct = totalConfigs > 0 ? (finishedRuns / totalConfigs) * 100 : 0;
 
   return (
     <PageWrapper className="p-8 max-w-7xl mx-auto space-y-6">
@@ -127,7 +135,7 @@ export default function SweepPage() {
                     <h3 className="text-sm font-medium">Sweep progress</h3>
                     <StatusBadge status={sweep.status} />
                   </div>
-                  <span className="text-sm text-muted-foreground tabular-nums">{completedRuns} / {totalRuns}</span>
+                  <span className="text-sm text-muted-foreground tabular-nums">{finishedRuns} / {totalConfigs} configs</span>
                 </div>
                 {/* Animated progress bar */}
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -141,6 +149,46 @@ export default function SweepPage() {
               </CardContent>
             </Card>
           </FadeIn>
+
+          {/* Live run status list */}
+          {sweep.runs && sweep.runs.length > 0 && (
+            <FadeIn>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Runs</CardTitle>
+                  <CardDescription>
+                    {activeRun
+                      ? <>Currently running config {(sweep.runs?.length || 0)} of {totalConfigs}…</>
+                      : sweep.status === 'succeeded'
+                        ? 'All configs completed.'
+                        : sweep.status === 'failed'
+                          ? 'Sweep stopped.'
+                          : 'Waiting…'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow><TableHead>#</TableHead><TableHead>Strategy</TableHead><TableHead>Context</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Started</TableHead></TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sweep.runs.map((run, i) => (
+                          <motion.tr key={run.id} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03, ...springSmooth }} className="border-b border-border last:border-0">
+                            <TableCell className="font-mono text-xs text-muted-foreground">{i + 1}</TableCell>
+                            <TableCell className="text-sm">{String((run.config_snapshot as Record<string, unknown>)?.prompt_strategy || sweep.matrix[i]?.prompt_strategy || '—').replace(/_/g, ' ')}</TableCell>
+                            <TableCell className="text-sm capitalize">{String((run.config_snapshot as Record<string, unknown>)?.context_mode || sweep.matrix[i]?.context_mode || '—')}</TableCell>
+                            <TableCell><StatusBadge status={run.status} /></TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">{run.started_at ? new Date(run.started_at).toLocaleTimeString() : '—'}</TableCell>
+                          </motion.tr>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            </FadeIn>
+          )}
 
           {/* Results table */}
           {sweep.metrics_summary && (
