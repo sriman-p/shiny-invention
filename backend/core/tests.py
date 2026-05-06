@@ -1,17 +1,9 @@
-import pytest
 from django.test import TestCase
 
 from pipeline.contracts import (
     CodeSymbol,
-    CritiqueOutput,
-    CritiqueScore,
-    GenerateOutput,
-    GeneratedTest,
-    MapOutput,
-    Mapping,
     ParseOutput,
     Requirement,
-    TraceOutput,
     TraceabilityRow,
 )
 
