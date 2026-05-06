@@ -101,8 +101,9 @@ ACP_AGENTS: dict[str, AgentSpec] = {
         id="gemini",
         display_name="Gemini CLI",
         command="gemini",
-        args=["--experimental-acp"],
-        env_required=["GEMINI_API_KEY"],
+        args=["--acp"],
+        env_required=[],
+        notes="Gemini CLI over ACP. Uses `gemini auth login` (Google OAuth) or GEMINI_API_KEY.",
     ),
     "opencode": AgentSpec(
         id="opencode",

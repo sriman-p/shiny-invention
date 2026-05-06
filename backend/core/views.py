@@ -298,7 +298,7 @@ def run_events_stream(request: HttpRequest, run_id: str) -> StreamingHttpRespons
                     event = q.get(timeout=30)
                     yield f"data: {json.dumps(event)}\n\n"
                     # Stop streaming after a terminal event
-                    if event.get("type") in ("run_succeeded", "run_failed"):
+                    if event.get("type") in ("run_succeeded", "run_failed", "run_cancelled"):
                         break
                 except queue.Empty:
                     # Send SSE comment as keepalive to prevent connection timeout
@@ -355,6 +355,12 @@ def run_cancel(request: HttpRequest, run_id: UUID) -> Response:
         run.status = "cancelled"
         run.finished_at = timezone.now()
         run.save()
+        # Notify SSE subscribers so the stream terminates immediately
+        _broadcast(str(run_id), {
+            "type": "run_cancelled",
+            "run_id": str(run_id),
+            "ts": timezone.now().isoformat(),
+        })
     return Response(RunDetailSerializer(run).data)
 
 
