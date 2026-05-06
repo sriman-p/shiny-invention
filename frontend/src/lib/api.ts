@@ -40,6 +40,7 @@ export const api = {
     }),
   getRecentRuns: () => request<Run[]>('/runs'),
   getRun: (id: string) => request<Run>(`/runs/${id}`),
+  cancelRun: (runId: string) => request<Run>(`/runs/${runId}/cancel`, { method: 'POST', body: '{}' }),
   createRun: (projectId: string, body: Record<string, unknown> = {}) =>
     request<Run>(`/projects/${projectId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   getRunEventsUrl: (runId: string) => `${API_BASE_URL}/runs/${runId}/events`,

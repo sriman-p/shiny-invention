@@ -27,6 +27,27 @@ from dotenv import load_dotenv
 # This file is not committed to git; see .env.example for the template.
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
+
+def _set_env_alias(target: str, *aliases: str) -> None:
+    """Populate a canonical env var from legacy/alternate names.
+
+    ReqLens primarily documents API keys in `.env.example`. This helper exists
+    to keep local developer setups working when older variable names are used.
+    """
+
+    if os.environ.get(target):
+        return
+
+    for alias in aliases:
+        value = os.environ.get(alias)
+        if value:
+            os.environ[target] = value
+            return
+
+
+# Back-compat: some setups use `cursor_sdk` instead of `CURSOR_API_KEY`.
+_set_env_alias("CURSOR_API_KEY", "cursor_sdk", "CURSOR_SDK", "CURSOR_SDK_API_KEY")
+
 # Base directory for the backend: /workspace/backend/
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"

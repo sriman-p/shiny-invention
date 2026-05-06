@@ -16,10 +16,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StatusBadge, StageStatusIcon } from '@/components/status-badge';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock, Copy, Check } from 'lucide-react';
+import { Clock, Copy, Check, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { StageName, StageStatus } from '@/lib/types';
 import { Button } from '@/components/ui/button';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
 
@@ -28,6 +29,7 @@ export default function RunDetailPage() {
   const runId = params.runId as string;
   const [activeStage, setActiveStage] = useState<StageName>('parse');
   const [copied, setCopied] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: run, isLoading } = useQuery({
     queryKey: ['run', runId],
@@ -35,6 +37,13 @@ export default function RunDetailPage() {
     refetchInterval: (query) => {
       const r = query.state.data;
       return r && (r.status === 'running' || r.status === 'pending') ? 2000 : false;
+    },
+  });
+
+  const cancelRunMutation = useMutation({
+    mutationFn: () => api.cancelRun(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['run', runId] });
     },
   });
 
@@ -89,13 +98,30 @@ export default function RunDetailPage() {
 
   if (!run) return <div className="p-8"><p className="text-muted-foreground">Run not found.</p></div>;
 
+  const canCancel = run.status === 'running' || run.status === 'pending';
+
   return (
     <PageWrapper className="p-8 max-w-6xl mx-auto space-y-6">
       {/* Header */}
       <FadeIn>
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold tracking-tight font-mono">Run {run.id.slice(0, 8)}</h1>
-          <StatusBadge status={run.status} />
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold tracking-tight font-mono">Run {run.id.slice(0, 8)}</h1>
+            <StatusBadge status={run.status} />
+          </div>
+
+          {canCancel && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              disabled={cancelRunMutation.isPending}
+              onClick={() => cancelRunMutation.mutate()}
+            >
+              <Square className="h-3.5 w-3.5" />
+              {cancelRunMutation.isPending ? 'Stopping…' : 'Stop'}
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">

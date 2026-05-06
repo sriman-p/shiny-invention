@@ -341,8 +341,8 @@ def run_cancel(request: HttpRequest, run_id: UUID) -> Response:
     """
     POST /api/v1/runs/<run_id>/cancel -- Cancel a running pipeline execution.
 
-    Only cancels runs that are currently in "running" status. Sets the status
-    to "cancelled" and records the finish time. Note that this does not
+    Cancels runs that are currently in "pending" or "running" status. Sets the
+    status to "cancelled" and records the finish time. Note that this does not
     forcefully terminate the background thread -- the pipeline stages check
     run status and should exit gracefully.
     """
@@ -351,7 +351,7 @@ def run_cancel(request: HttpRequest, run_id: UUID) -> Response:
     except Run.DoesNotExist:
         return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    if run.status == "running":
+    if run.status in {"pending", "running"}:
         run.status = "cancelled"
         run.finished_at = timezone.now()
         run.save()

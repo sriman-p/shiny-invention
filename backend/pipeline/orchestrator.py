@@ -37,6 +37,9 @@ from .stages.base import StageContext, StageEvent
 
 logger = logging.getLogger(__name__)
 
+class RunCancelledError(Exception):
+    """Raised when a run is cancelled mid-execution."""
+
 
 def _now_iso() -> str:
     """Return the current UTC time as an ISO 8601 string for event timestamps."""
@@ -81,6 +84,10 @@ async def run_pipeline(
     @sync_to_async
     def save_run(run_obj: Run) -> None:
         run_obj.save()
+
+    @sync_to_async
+    def load_run_status() -> str:
+        return str(Run.objects.only("status").get(id=run_id).status)
 
     def agent_configs_from_snapshot(snapshot: dict[str, Any]) -> dict[str, dict[str, str]]:
         agents = snapshot.get("agents", [])
@@ -163,6 +170,11 @@ async def run_pipeline(
         agent_configs = await load_agent_configs(str(project.id))
 
     for stage_name in STAGE_ORDER:
+        # Respect cancellation between stages.
+        if await load_run_status() == "cancelled":
+            await emit({"type": "run_cancelled", "run_id": run_id, "ts": _now_iso()})
+            return
+
         stage_cls = STAGE_CLASSES.get(stage_name)
         if not stage_cls:
             continue
@@ -206,6 +218,9 @@ async def run_pipeline(
 
             async def stage_event_handler(evt: StageEvent) -> None:
                 """Forward stage-level progress events to the SSE stream."""
+                # Best-effort cancellation check during long-running stages.
+                if await load_run_status() == "cancelled":
+                    raise RunCancelledError("Run cancelled")
                 await emit(
                     {
                         "type": "stage_progress",
@@ -218,6 +233,10 @@ async def run_pipeline(
 
             # Execute the stage, passing the previous stage's output
             previous_output = await stage.run(ctx, previous_output, stage_event_handler)
+
+            # If the stage returned but the run was cancelled in the meantime, stop.
+            if await load_run_status() == "cancelled":
+                raise RunCancelledError("Run cancelled")
 
             # Record successful completion
             se.status = "succeeded"
@@ -235,6 +254,26 @@ async def run_pipeline(
                 }
             )
 
+        except RunCancelledError:
+            se.status = "cancelled"
+            se.finished_at = datetime.now(timezone.utc)
+            se.error = "cancelled"
+            await save_stage_execution(se)
+
+            run.status = "cancelled"
+            run.finished_at = datetime.now(timezone.utc)
+            await save_run(run)
+
+            await emit(
+                {
+                    "type": "stage_cancelled",
+                    "run_id": run_id,
+                    "stage": stage_name,
+                    "ts": _now_iso(),
+                }
+            )
+            await emit({"type": "run_cancelled", "run_id": run_id, "ts": _now_iso()})
+            return
         except Exception as e:
             # If any stage fails, record the error, mark the run as failed, and stop
             logger.exception("Stage %s failed: %s", stage_name, e)
@@ -260,6 +299,14 @@ async def run_pipeline(
             return
 
     # All stages completed successfully
+    # Double-check cancellation before marking success.
+    if await load_run_status() == "cancelled":
+        run.status = "cancelled"
+        run.finished_at = datetime.now(timezone.utc)
+        await save_run(run)
+        await emit({"type": "run_cancelled", "run_id": run_id, "ts": _now_iso()})
+        return
+
     run.status = "succeeded"
     run.finished_at = datetime.now(timezone.utc)
     await save_run(run)
