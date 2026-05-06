@@ -1,0 +1,38 @@
+# =============================================================================
+# ReqLens Docker Compose Configuration (Development Only)
+# =============================================================================
+#
+# This compose file provides an OPTIONAL PostgreSQL database for development.
+# By default, ReqLens uses SQLite (no Docker needed). Only use this if you
+# want to develop against PostgreSQL for production-like behavior or to test
+# concurrent database access.
+#
+# Usage:
+#   docker compose up db       # Start only the PostgreSQL service
+#   docker compose down        # Stop and remove containers
+#   docker compose down -v     # Stop, remove containers, AND delete data
+#
+# To switch Django to use this Postgres instance, update DATABASES in
+# backend/reqlens/settings.py to use the django.db.backends.postgresql
+# engine with the credentials below.
+# =============================================================================
+
+services:
+  # PostgreSQL 16 database server (Alpine-based for smaller image size).
+  # Accessible at localhost:5432 with the credentials defined below.
+  # Data is persisted in a named Docker volume (pgdata) so it survives
+  # container restarts. Use `docker compose down -v` to wipe data.
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: reqlens        # Database name
+      POSTGRES_USER: reqlens      # Database user
+      POSTGRES_PASSWORD: reqlens  # Database password (dev-only, not for production)
+    ports:
+      - "5432:5432"               # Expose Postgres on the standard port
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # Persist data across container restarts
+
+# Named volume for PostgreSQL data persistence.
+volumes:
+  pgdata:
