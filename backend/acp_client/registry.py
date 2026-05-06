@@ -35,6 +35,7 @@ class AgentSpec:
         args: Additional CLI arguments to pass when invoking the agent.
         runner: How ReqLens should invoke this agent ("acp" or "cursor-sdk").
         model: Optional model id for SDK-backed runners.
+        model_options: Known model IDs that the UI can offer up front.
         env_required: List of environment variable names that must be set
             for this agent to function (typically API keys).
         notes: Optional descriptive text shown in the agent list UI.
@@ -46,6 +47,7 @@ class AgentSpec:
     args: list[str] = field(default_factory=list)
     runner: str = "acp"
     model: str | None = None
+    model_options: list[str] = field(default_factory=list)
     env_required: list[str] = field(default_factory=list)
     notes: str = ""
 
@@ -84,6 +86,14 @@ ACP_AGENTS: dict[str, AgentSpec] = {
         args=[str(CURSOR_SDK_BRIDGE)],
         runner="cursor-sdk",
         model="composer-2",
+        model_options=[
+            "composer-2",
+            "claude-4-sonnet",
+            "claude-4-opus",
+            "gemini-2.5-pro",
+            "gpt-4.1",
+            "o3",
+        ],
         env_required=["CURSOR_API_KEY"],
         notes="TypeScript SDK bridge using Composer 2. Cursor account billing and eligible discounts apply.",
     ),

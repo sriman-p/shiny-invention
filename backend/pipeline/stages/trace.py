@@ -116,6 +116,7 @@ class TraceStage(Stage):
             cwd=Path(ctx.code_path),
             system_text=system_text,
             user_text=user_text,
+            model_id=ctx.model_id,
         )
 
         try:

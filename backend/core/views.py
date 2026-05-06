@@ -115,6 +115,7 @@ def agents_list(request: HttpRequest) -> Response:
                 "args": spec.args,
                 "runner": spec.runner,
                 "model": spec.model,
+                "model_options": spec.model_options,
                 "available": command_available and env_available,
                 "command_on_path": command_available,
                 "env_vars_set": env_available,
@@ -179,6 +180,7 @@ def project_agents_update(request: HttpRequest, project_id: UUID) -> Response:
             stage=cfg["stage"],
             defaults={
                 "agent_id": cfg.get("agent_id", "claude-code"),
+                "model_id": cfg.get("model_id") or "",
                 "prompt_strategy": cfg.get("prompt_strategy", "zero_shot"),
                 "context_mode": cfg.get("context_mode", "full"),
                 "enabled": cfg.get("enabled", True),

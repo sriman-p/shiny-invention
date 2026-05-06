@@ -90,6 +90,7 @@ class ParseStage(Stage):
             cwd=Path(ctx.code_path),
             system_text=system_text,
             user_text=user_text,
+            model_id=ctx.model_id,
         )
 
         # Attempt to parse the agent's response into our structured format

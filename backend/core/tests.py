@@ -101,6 +101,7 @@ class APITest(TestCase):
         cursor_sdk = next(a for a in data if a["id"] == "cursor-sdk-composer-2")
         assert cursor_sdk["runner"] == "cursor-sdk"
         assert cursor_sdk["model"] == "composer-2"
+        assert "composer-2" in cursor_sdk["model_options"]
         assert cursor_sdk["args"]
 
     def test_projects_list(self):
@@ -131,7 +132,12 @@ class APITest(TestCase):
             code_path="/tmp/test",
             requirements_path="/tmp/test/requirements.md",
         )
-        agent_config = AgentConfig.objects.create(project=project, stage="parse", agent_id="cursor")
+        agent_config = AgentConfig.objects.create(
+            project=project,
+            stage="parse",
+            agent_id="cursor-sdk-composer-2",
+            model_id="composer-2",
+        )
 
         async def noop_run_pipeline(*args, **kwargs):
             return None
@@ -146,7 +152,8 @@ class APITest(TestCase):
         assert response.status_code == 201
         run = Run.objects.get(id=response.json()["id"])
         assert run.config_snapshot["agents"][0]["id"] == str(agent_config.id)
-        assert run.config_snapshot["agents"][0]["agent_id"] == "cursor"
+        assert run.config_snapshot["agents"][0]["agent_id"] == "cursor-sdk-composer-2"
+        assert run.config_snapshot["agents"][0]["model_id"] == "composer-2"
 
     def test_fs_validate(self):
         """Verify GET /api/v1/fs/validate correctly reports that /tmp exists."""

@@ -73,13 +73,26 @@ async def run_sweep(
         sweep_obj.save()
 
     @sync_to_async
-    def create_run_for_config(strategy: str, context_mode: str, agent_id: str) -> Run:
+    def create_run_for_config(strategy: str, context_mode: str, agent_id: str, model_id: str) -> Run:
+        agents = [
+            {
+                "stage": stage_name,
+                "agent_id": agent_id,
+                "model_id": model_id,
+                "prompt_strategy": strategy,
+                "context_mode": context_mode,
+                "enabled": True,
+            }
+            for stage_name in ["parse", "analyze", "map", "generate", "critique", "trace"]
+        ]
         run_obj = Run.objects.create(
             project=sweep.project,
             config_snapshot={
                 "prompt_strategy": strategy,
                 "context_mode": context_mode,
                 "agent_id": agent_id,
+                "model_id": model_id,
+                "agents": agents,
                 "permissions": "auto",
             },
         )
@@ -90,13 +103,14 @@ async def run_sweep(
         return run_obj
 
     @sync_to_async
-    def update_agent_configs(strategy: str, context_mode: str, agent_id: str) -> None:
+    def update_agent_configs(strategy: str, context_mode: str, agent_id: str, model_id: str) -> None:
         for stage_name in ["parse", "analyze", "map", "generate", "critique", "trace"]:
             AgentConfig.objects.update_or_create(
                 project=sweep.project,
                 stage=stage_name,
                 defaults={
                     "agent_id": agent_id,
+                    "model_id": model_id,
                     "prompt_strategy": strategy,
                     "context_mode": context_mode,
                     "enabled": True,
@@ -133,14 +147,15 @@ async def run_sweep(
         strategy = config.get("prompt_strategy", "zero_shot") if isinstance(config, dict) else "zero_shot"
         context_mode = config.get("context_mode", "full") if isinstance(config, dict) else "full"
         agent_id = config.get("agent_id", "claude-code") if isinstance(config, dict) else "claude-code"
+        model_id = config.get("model_id", "") if isinstance(config, dict) else ""
 
         # Create an isolated run/artifact directory for this configuration.
-        run = await create_run_for_config(strategy, context_mode, agent_id)
+        run = await create_run_for_config(strategy, context_mode, agent_id, model_id)
 
         # Update the project's agent configs for ALL stages to use this
         # configuration. This is what makes each sweep run use a different
         # prompt strategy / context mode / agent.
-        await update_agent_configs(strategy, context_mode, agent_id)
+        await update_agent_configs(strategy, context_mode, agent_id, model_id)
 
         await emit(
             {
@@ -166,6 +181,7 @@ async def run_sweep(
         metrics["prompt_strategy"] = strategy
         metrics["context_mode"] = context_mode
         metrics["agent_id"] = agent_id
+        metrics["model_id"] = model_id
         metrics["run_id"] = str(run.id)
         all_metrics.append(metrics)
 

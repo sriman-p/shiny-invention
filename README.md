@@ -107,3 +107,5 @@ pnpm build
 ## Agent Registry
 
 The Agent Registry page at http://localhost:3000/settings/agents shows whether each agent command is on `PATH` and whether required environment variables are set. Missing optional agents do not block local UI work.
+
+On a project page, use the Agents tab to choose the agent and model for each pipeline stage. Leaving the model as `Agent default` uses that agent's configured default; choosing a known model or entering a custom model ID stores it in the run snapshot and passes it to agents that support model selection.

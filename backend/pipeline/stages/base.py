@@ -41,6 +41,7 @@ class StageContext:
         project_name: Human-readable project name (for logging/display).
         run_id: UUID string of the current pipeline run.
         agent_id: Which AI agent to invoke for this stage.
+        model_id: Optional model override for agents that support model choice.
         prompt_strategy: How to structure the prompt (e.g., "zero_shot").
         context_mode: How much code context to include (e.g., "full").
         code_path: Filesystem path to the project's source code.
@@ -58,6 +59,7 @@ class StageContext:
     code_path: str
     requirements_path: str
     artifacts_dir: str
+    model_id: str = ""
     retrieval_index: Any = None
 
 

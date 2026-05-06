@@ -43,6 +43,7 @@ class TestAgentRegistry:
         assert spec.command == "node"
         assert spec.runner == "cursor-sdk"
         assert spec.model == "composer-2"
+        assert "composer-2" in spec.model_options
         assert "CURSOR_API_KEY" in spec.env_required
 
     def test_gemini_spec(self):
@@ -170,6 +171,49 @@ json.dump(
         assert result.raw_updates[-1]["type"] == "cursor_sdk_result"
         assert result.raw_updates[-1]["model"] == {"id": "composer-2"}
         assert updates == result.raw_updates
+
+    @pytest.mark.asyncio
+    async def test_cursor_sdk_runner_uses_model_override(self, tmp_path):
+        bridge = tmp_path / "fake_bridge.py"
+        bridge.write_text(
+            """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+json.dump(
+    {
+        "text": payload["model"],
+        "tool_calls": [],
+        "raw_updates": [],
+        "stop_reason": "finished",
+        "model": {"id": payload["model"]},
+    },
+    sys.stdout,
+)
+""",
+            encoding="utf-8",
+        )
+        spec = AgentSpec(
+            id="cursor-sdk-test",
+            display_name="Cursor SDK Test",
+            command=sys.executable,
+            args=[str(bridge)],
+            runner="cursor-sdk",
+            model="composer-2",
+        )
+
+        result = await run_cursor_sdk_prompt(
+            spec,
+            cwd=tmp_path,
+            system_text="system",
+            user_text="user",
+            timeout_s=5,
+            model_id="claude-4-sonnet",
+        )
+
+        assert result.text == "claude-4-sonnet"
+        assert result.raw_updates[-1]["model"] == {"id": "claude-4-sonnet"}
 
     @pytest.mark.asyncio
     async def test_cursor_sdk_runner_reports_bridge_errors(self, tmp_path):

@@ -51,6 +51,11 @@ export default function RunDetailPage() {
     return se?.agent_id || '';
   };
 
+  const getStageModel = (stage: StageName): string => {
+    const se = run?.stages?.find((s) => s.stage === stage);
+    return se?.model_id || '';
+  };
+
   const getStageLatency = (stage: StageName): string | null => {
     const se = run?.stages?.find((s) => s.stage === stage);
     if (se?.latency_ms) return `${(se.latency_ms / 1000).toFixed(1)}s`;
@@ -138,6 +143,7 @@ export default function RunDetailPage() {
               const isActive = activeStage === stage;
               const latency = getStageLatency(stage);
               const agent = getStageAgent(stage);
+              const model = getStageModel(stage);
 
               return (
                 <motion.button
@@ -167,6 +173,7 @@ export default function RunDetailPage() {
                     <StageStatusIcon status={status} />
                   </div>
                   {agent && <span className="text-[10px] text-muted-foreground/60 mt-1.5 font-mono truncate max-w-[85px] relative">{agent}</span>}
+                  {model && <span className="text-[10px] text-muted-foreground/50 mt-0.5 font-mono truncate max-w-[85px] relative">{model}</span>}
                   {latency && <span className="text-[10px] text-muted-foreground/40 mt-0.5 tabular-nums relative">{latency}</span>}
                 </motion.button>
               );

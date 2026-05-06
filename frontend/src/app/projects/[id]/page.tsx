@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -24,6 +25,9 @@ import { toast } from 'sonner';
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
 const STRATEGIES = ['zero_shot', 'chain_of_thought', 'few_shot_static', 'few_shot_dynamic'];
 const CONTEXT_MODES = ['minimal', 'local', 'module', 'full'];
+const DEFAULT_MODEL_VALUE = '__agent_default__';
+const CUSTOM_MODEL_VALUE = '__custom_model__';
+type StageConfig = { agent_id: string; model_id: string; prompt_strategy: string; context_mode: string };
 const STAGE_DESC: Record<string, string> = {
   parse: 'Extract requirements from document',
   analyze: 'Walk codebase, build symbol inventory',
@@ -41,46 +45,72 @@ export default function ProjectDetailPage() {
 
   const { data: project, isLoading } = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: api.getAgents });
-  const [agentConfigs, setAgentConfigs] = useState<Record<string, { agent_id: string; prompt_strategy: string; context_mode: string }>>({});
+  const [agentConfigs, setAgentConfigs] = useState<Record<string, StageConfig>>({});
+  const [customModelStages, setCustomModelStages] = useState<Record<string, boolean>>({});
 
-  const saveAgentsMutation = useMutation({
-    mutationFn: (configs: Record<string, unknown>[]) => api.updateProjectAgents(projectId, configs),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      setAgentConfigs({});
-      toast.success('Agent configuration saved');
-    },
-  });
+  const getAgent = (agentId: string) => agents.find((agent) => agent.id === agentId);
 
-  const runPipelineMutation = useMutation({
-    mutationFn: () => api.createRun(projectId),
-    onSuccess: (run) => {
-      queryClient.invalidateQueries({ queryKey: ['recent-runs'] });
-      router.push(`/projects/${projectId}/runs/${run.id}`);
-    },
-  });
+  const getModelOptions = (agentId: string) => {
+    const agent = getAgent(agentId);
+    return Array.from(new Set([agent?.model, ...(agent?.model_options ?? [])].filter(Boolean))) as string[];
+  };
 
-  const getStageConfig = (stage: StageName) => {
+  const getStageConfig = (stage: StageName): StageConfig => {
     const existing = project?.agents?.find((a) => a.stage === stage);
     const override = agentConfigs[stage];
     return {
       agent_id: override?.agent_id || existing?.agent_id || 'claude-code',
+      model_id: override?.model_id ?? existing?.model_id ?? '',
       prompt_strategy: override?.prompt_strategy || existing?.prompt_strategy || 'zero_shot',
       context_mode: override?.context_mode || existing?.context_mode || 'full',
     };
   };
 
-  const updateStageConfig = (stage: StageName, field: string, value: string | null) => {
-    if (!value) return;
-    setAgentConfigs((prev) => ({ ...prev, [stage]: { ...getStageConfig(stage), [field]: value } }));
-  };
+  const buildAgentConfigs = () => STAGES.map((stage) => ({ stage, ...getStageConfig(stage), enabled: true }));
 
-  const handleSaveAgents = () => {
-    const configs = STAGES.map((stage) => ({ stage, ...getStageConfig(stage), enabled: true }));
-    saveAgentsMutation.mutate(configs);
+  const updateStageConfig = (stage: StageName, field: keyof StageConfig, value: string | null) => {
+    if (value === null) return;
+    setAgentConfigs((prev) => {
+      const next = { ...getStageConfig(stage), [field]: value };
+      if (field === 'agent_id') {
+        next.model_id = '';
+        setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
+      }
+      return { ...prev, [stage]: next };
+    });
   };
 
   const hasUnsavedChanges = Object.keys(agentConfigs).length > 0;
+
+  const saveAgentsMutation = useMutation({
+    mutationFn: () => api.updateProjectAgents(projectId, buildAgentConfigs()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      setAgentConfigs({});
+      setCustomModelStages({});
+      toast.success('Agent configuration saved');
+    },
+  });
+
+  const runPipelineMutation = useMutation({
+    mutationFn: async () => {
+      if (hasUnsavedChanges) {
+        await api.updateProjectAgents(projectId, buildAgentConfigs());
+      }
+      return api.createRun(projectId);
+    },
+    onSuccess: (run) => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['recent-runs'] });
+      setAgentConfigs({});
+      setCustomModelStages({});
+      router.push(`/projects/${projectId}/runs/${run.id}`);
+    },
+  });
+
+  const handleSaveAgents = () => {
+    saveAgentsMutation.mutate();
+  };
 
   if (isLoading) {
     return (
@@ -92,7 +122,7 @@ export default function ProjectDetailPage() {
   if (!project) return <div className="p-8"><p className="text-muted-foreground">Project not found.</p></div>;
 
   return (
-    <PageWrapper className="p-8 max-w-6xl mx-auto space-y-6">
+    <PageWrapper className="p-8 max-w-7xl mx-auto space-y-6">
       <FadeIn>
         <div className="flex items-start justify-between">
           <div>
@@ -150,7 +180,7 @@ export default function ProjectDetailPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-base">Agent configuration</CardTitle>
-                    <CardDescription>Select an ACP agent, strategy, and context for each stage.</CardDescription>
+                    <CardDescription>Select an agent, model, strategy, and context for each stage.</CardDescription>
                   </div>
                   <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
                     <Button onClick={handleSaveAgents} disabled={saveAgentsMutation.isPending || !hasUnsavedChanges} variant={hasUnsavedChanges ? 'default' : 'outline'} size="sm">
@@ -164,11 +194,21 @@ export default function ProjectDetailPage() {
                 <div className="rounded-lg border overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow><TableHead className="w-[200px]">Stage</TableHead><TableHead>Agent</TableHead><TableHead>Strategy</TableHead><TableHead>Context</TableHead></TableRow>
+                      <TableRow>
+                        <TableHead className="w-[200px]">Stage</TableHead>
+                        <TableHead>Agent</TableHead>
+                        <TableHead>Model</TableHead>
+                        <TableHead>Strategy</TableHead>
+                        <TableHead>Context</TableHead>
+                      </TableRow>
                     </TableHeader>
                     <TableBody>
                       {STAGES.map((stage, i) => {
                         const config = getStageConfig(stage);
+                        const modelOptions = getModelOptions(config.agent_id);
+                        const hasCustomModel = customModelStages[stage] || Boolean(config.model_id && !modelOptions.includes(config.model_id));
+                        const modelSelectValue = hasCustomModel ? CUSTOM_MODEL_VALUE : config.model_id || DEFAULT_MODEL_VALUE;
+                        const defaultModel = getAgent(config.agent_id)?.model;
                         return (
                           <motion.tr key={stage} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06, ...springSmooth }} className="border-b border-border last:border-0">
                             <TableCell>
@@ -179,6 +219,40 @@ export default function ProjectDetailPage() {
                                 <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>{agents.map((a: AgentSpec) => (<SelectItem key={a.id} value={a.id} disabled={!a.available}>{a.display_name}</SelectItem>))}</SelectContent>
                               </Select>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex w-[190px] flex-col gap-1">
+                                <Select
+                                  value={modelSelectValue}
+                                  onValueChange={(v) => {
+                                    if (v === DEFAULT_MODEL_VALUE) {
+                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
+                                      updateStageConfig(stage, 'model_id', '');
+                                    } else if (v === CUSTOM_MODEL_VALUE) {
+                                      setCustomModelStages((custom) => ({ ...custom, [stage]: true }));
+                                      updateStageConfig(stage, 'model_id', config.model_id || '');
+                                    } else {
+                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
+                                      updateStageConfig(stage, 'model_id', v);
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={DEFAULT_MODEL_VALUE}>{defaultModel ? `Default (${defaultModel})` : 'Agent default'}</SelectItem>
+                                    {modelOptions.map((model) => (<SelectItem key={model} value={model}>{model}</SelectItem>))}
+                                    <SelectItem value={CUSTOM_MODEL_VALUE}>Custom model...</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                {modelSelectValue === CUSTOM_MODEL_VALUE && (
+                                  <Input
+                                    value={config.model_id}
+                                    onChange={(event) => updateStageConfig(stage, 'model_id', event.target.value)}
+                                    placeholder="model id"
+                                    className="h-8 text-xs font-mono"
+                                  />
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <Select value={config.prompt_strategy} onValueChange={(v) => updateStageConfig(stage, 'prompt_strategy', v)}>

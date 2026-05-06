@@ -40,7 +40,8 @@ export const api = {
     }),
   getRecentRuns: () => request<Run[]>('/runs'),
   getRun: (id: string) => request<Run>(`/runs/${id}`),
-  createRun: (projectId: string) => request<Run>(`/projects/${projectId}/runs`, { method: 'POST', body: '{}' }),
+  createRun: (projectId: string, body: Record<string, unknown> = {}) =>
+    request<Run>(`/projects/${projectId}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   getRunEventsUrl: (runId: string) => `${API_BASE_URL}/runs/${runId}/events`,
   createSweep: (projectId: string, matrix: Record<string, string>[]) =>
     request<Sweep>(`/projects/${projectId}/sweeps`, {

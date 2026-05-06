@@ -33,7 +33,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentConfig
-        fields = ["id", "stage", "agent_id", "prompt_strategy", "context_mode", "enabled"]
+        fields = ["id", "stage", "agent_id", "model_id", "prompt_strategy", "context_mode", "enabled"]
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -104,6 +104,7 @@ class StageExecutionSerializer(serializers.ModelSerializer):
             "id",
             "stage",
             "agent_id",
+            "model_id",
             "status",
             "started_at",
             "finished_at",

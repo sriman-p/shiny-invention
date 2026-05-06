@@ -119,17 +119,19 @@ async def run_cursor_sdk_prompt(
     system_text: str,
     user_text: str,
     timeout_s: int,
+    model_id: str = "",
     on_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ACPResult:
     """Run a prompt through the local Cursor TypeScript SDK bridge."""
     start = time.monotonic()
     env = os.environ.copy()
-    if spec.model:
-        env["REQLENS_CURSOR_SDK_MODEL"] = spec.model
+    selected_model = model_id or spec.model
+    if selected_model:
+        env["REQLENS_CURSOR_SDK_MODEL"] = selected_model
 
     payload = {
         "cwd": str(cwd),
-        "model": spec.model,
+        "model": selected_model,
         "system_text": system_text,
         "user_text": user_text,
     }
@@ -295,6 +297,7 @@ async def run_acp_prompt(
     cwd: pathlib.Path,
     system_text: str,
     user_text: str,
+    model_id: str = "",
     timeout_s: int = 600,
     on_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ACPResult:
@@ -306,6 +309,7 @@ async def run_acp_prompt(
         cwd: Working directory for the agent process (typically the project's code_path).
         system_text: System-level instructions that define the agent's role.
         user_text: User-level prompt containing data and expected output schema.
+        model_id: Optional model override for agents that expose model selection.
         timeout_s: Maximum seconds to wait for the agent's response (default: 600s / 10min).
         on_update: Optional async callback invoked for each streaming update from the agent.
 
@@ -334,6 +338,7 @@ async def run_acp_prompt(
             cwd=cwd,
             system_text=system_text,
             user_text=user_text,
+            model_id=model_id,
             timeout_s=timeout_s,
             on_update=on_update,
         )
@@ -363,6 +368,17 @@ async def run_acp_prompt(
             )
             # Create a new agent session scoped to the project directory
             session = await conn.new_session(cwd=str(cwd), mcp_servers=[])
+            if model_id:
+                available_models = getattr(session.models, "available_models", None) if session.models else None
+                available_model_ids = [model.model_id for model in available_models or []]
+                if available_model_ids and model_id not in available_model_ids:
+                    raise ACPError(
+                        f"Model '{model_id}' is not available for {agent_id}. "
+                        f"Available models: {available_model_ids}"
+                    )
+                if session.models is None:
+                    raise ACPError(f"Agent {agent_id} does not expose ACP model selection")
+                await conn.set_session_model(model_id=model_id, session_id=session.session_id)
 
             # Combine system and user prompts into a single message
             # (ACP's prompt API takes a list of content blocks)

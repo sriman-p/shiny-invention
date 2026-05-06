@@ -17,6 +17,7 @@ export interface AgentSpec {
   args: string[];
   runner: string;
   model: string | null;
+  model_options: string[];
   available: boolean;
   command_on_path: boolean;
   env_vars_set: boolean;
@@ -28,6 +29,7 @@ export interface AgentConfig {
   id: string;
   stage: StageName;
   agent_id: string;
+  model_id: string;
   prompt_strategy: string;
   context_mode: string;
   enabled: boolean;
@@ -49,6 +51,7 @@ export interface StageExecution {
   id: string;
   stage: StageName;
   agent_id: string;
+  model_id: string;
   status: StageStatus;
   started_at: string | null;
   finished_at: string | null;

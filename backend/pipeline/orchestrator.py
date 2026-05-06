@@ -82,11 +82,27 @@ async def run_pipeline(
     def save_run(run_obj: Run) -> None:
         run_obj.save()
 
+    def agent_configs_from_snapshot(snapshot: dict[str, Any]) -> dict[str, dict[str, str]]:
+        agents = snapshot.get("agents", [])
+        if not isinstance(agents, list):
+            return {}
+        return {
+            str(ac["stage"]): {
+                "agent_id": str(ac.get("agent_id") or "claude-code"),
+                "model_id": str(ac.get("model_id") or ""),
+                "prompt_strategy": str(ac.get("prompt_strategy") or "zero_shot"),
+                "context_mode": str(ac.get("context_mode") or "full"),
+            }
+            for ac in agents
+            if isinstance(ac, dict) and ac.get("stage")
+        }
+
     @sync_to_async
     def load_agent_configs(project_id: str) -> dict[str, dict[str, str]]:
         return {
             ac.stage: {
                 "agent_id": ac.agent_id,
+                "model_id": ac.model_id,
                 "prompt_strategy": ac.prompt_strategy,
                 "context_mode": ac.context_mode,
             }
@@ -94,11 +110,12 @@ async def run_pipeline(
         }
 
     @sync_to_async
-    def create_stage_execution(stage_name: str, agent_id: str) -> StageExecution:
+    def create_stage_execution(stage_name: str, agent_id: str, model_id: str) -> StageExecution:
         return StageExecution.objects.create(
             run_id=run_id,
             stage=stage_name,
             agent_id=agent_id,
+            model_id=model_id,
             status="running",
             started_at=datetime.now(timezone.utc),
         )
@@ -139,8 +156,11 @@ async def run_pipeline(
     # The first stage (parse) receives None.
     previous_output: BaseModel | None = None
 
-    # Load agent configs for all enabled stages, keyed by stage name
-    agent_configs = await load_agent_configs(str(project.id))
+    # Prefer the immutable run snapshot; fall back to live configs for legacy
+    # sweep runs that predate per-stage snapshots.
+    agent_configs = agent_configs_from_snapshot(run.config_snapshot)
+    if not agent_configs:
+        agent_configs = await load_agent_configs(str(project.id))
 
     for stage_name in STAGE_ORDER:
         stage_cls = STAGE_CLASSES.get(stage_name)
@@ -150,11 +170,12 @@ async def run_pipeline(
         # Look up the agent config for this stage, falling back to defaults
         ac = agent_configs.get(stage_name)
         agent_id = ac["agent_id"] if ac else "claude-code"
+        model_id = ac["model_id"] if ac else ""
         prompt_strategy = ac["prompt_strategy"] if ac else "zero_shot"
         context_mode = ac["context_mode"] if ac else "full"
 
         # Create a database record to track this stage's execution
-        se = await create_stage_execution(stage_name, agent_id)
+        se = await create_stage_execution(stage_name, agent_id, model_id)
 
         await emit(
             {
@@ -162,7 +183,7 @@ async def run_pipeline(
                 "run_id": run_id,
                 "stage": stage_name,
                 "ts": _now_iso(),
-                "payload": {"agent_id": agent_id},
+                "payload": {"agent_id": agent_id, "model_id": model_id},
             }
         )
 
@@ -172,6 +193,7 @@ async def run_pipeline(
             project_name=project.name,
             run_id=run_id,
             agent_id=agent_id,
+            model_id=model_id,
             prompt_strategy=prompt_strategy,
             context_mode=context_mode,
             code_path=project.code_path,
