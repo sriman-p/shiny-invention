@@ -1,3 +1,19 @@
+"""
+Analyze stage -- inventories code symbols in the project's codebase.
+
+This is the second stage of the pipeline. It directs an AI agent to walk the
+project's source code directory and produce a structured inventory of all
+functions, classes, and methods, along with a one-paragraph project summary.
+
+Input: ParseOutput from the parse stage (requirements list)
+Output: AnalyzeOutput containing the parse output, discovered code symbols,
+    and a project summary
+
+The analyze output combines the requirements from the parse stage with the
+code symbols discovered here, forming the complete "two sides" that the
+map stage will link together.
+"""
+
 import logging
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -14,6 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 class AnalyzeStage(Stage):
+    """
+    Pipeline stage that discovers code symbols in the project's source tree.
+
+    Sends the AI agent to walk the codebase directory, identify all functions,
+    classes, and methods, and return them as structured CodeSymbol objects.
+    """
+
     name = "analyze"
 
     async def run(
@@ -22,6 +45,18 @@ class AnalyzeStage(Stage):
         previous_output: BaseModel | None,
         on_event: Callable[[StageEvent], Awaitable[None]],
     ) -> AnalyzeOutput:
+        """
+        Execute the analyze stage.
+
+        Args:
+            ctx: Stage context with project paths, agent config, etc.
+            previous_output: Expected to be a ParseOutput from the parse stage.
+            on_event: Callback for emitting progress events.
+
+        Returns:
+            AnalyzeOutput with the symbol inventory and project summary.
+        """
+        # Accept the parse output from the previous stage, or create an empty fallback
         parse_output = previous_output if isinstance(previous_output, ParseOutput) else ParseOutput(requirements=[])
 
         schema = AnalyzeOutput.model_json_schema()
@@ -49,6 +84,8 @@ class AnalyzeStage(Stage):
 
         try:
             data = self.extract_json(result.text)
+            # The agent may not include the parse output in its response,
+            # so we inject it if missing to maintain the output chain
             if "parse" not in data:
                 data["parse"] = parse_output.model_dump()
             output = AnalyzeOutput.model_validate(data)

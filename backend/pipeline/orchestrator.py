@@ -1,3 +1,30 @@
+"""
+Pipeline orchestrator -- coordinates the sequential execution of all pipeline stages.
+
+This is the "conductor" of the ReqLens pipeline. When a run is triggered, the
+orchestrator:
+  1. Loads the Run and Project from the database
+  2. Sets the run status to "running"
+  3. Iterates through stages in order: parse -> analyze -> map -> generate -> critique -> trace
+  4. For each stage:
+     a. Looks up the agent config (which agent, prompt strategy, context mode)
+     b. Creates a StageExecution record
+     c. Builds a StageContext with all needed configuration
+     d. Executes the stage, passing the previous stage's output
+     e. Saves the stage result and emits SSE events
+  5. If any stage fails, marks the run as failed and stops
+  6. If all stages succeed, marks the run as succeeded
+
+The orchestrator uses an async/await pattern because ACP agent calls are async.
+It runs inside a background thread spawned by the views module, with a fresh
+asyncio event loop.
+
+Events are emitted via the on_event callback, which the views module wires up
+to the SSE broadcast system. Event types include:
+  - run_started, run_succeeded, run_failed
+  - stage_started, stage_completed, stage_failed, stage_progress
+"""
+
 import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -11,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string for event timestamps."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -18,6 +46,20 @@ async def run_pipeline(
     run_id: str,
     on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> None:
+    """
+    Execute the full pipeline for a given run ID.
+
+    This is the main entry point called from background threads. It handles
+    Django setup (since it runs outside the request lifecycle), then sequentially
+    executes each pipeline stage.
+
+    Args:
+        run_id: UUID string of the Run to execute.
+        on_event: Optional callback for emitting real-time events. The callback
+            may be sync or async -- the emit() helper handles both cases.
+    """
+    # Ensure Django is fully initialized since this runs in a background thread
+    # outside the normal WSGI request lifecycle.
     import os
     import sys
 
@@ -34,23 +76,35 @@ async def run_pipeline(
     project = run.project
 
     async def emit(event: dict[str, Any]) -> None:
+        """
+        Safely emit an event via the callback.
+
+        Handles both sync and async callbacks (the views module passes a sync
+        lambda that calls _broadcast). Swallows exceptions to prevent event
+        emission errors from crashing the pipeline.
+        """
         if on_event:
             try:
                 if callable(on_event):
                     result = on_event(event)
+                    # If the callback returns a coroutine, await it
                     if hasattr(result, "__await__"):
                         await result
             except Exception as e:
                 logger.warning("Event emit failed: %s", e)
 
+    # Mark the run as running and record the start time
     run.status = "running"
     run.started_at = datetime.now(timezone.utc)
     run.save()
 
     await emit({"type": "run_started", "run_id": run_id, "ts": _now_iso()})
 
+    # Each stage's output is passed as input to the next stage.
+    # The first stage (parse) receives None.
     previous_output: BaseModel | None = None
 
+    # Load agent configs for all enabled stages, keyed by stage name
     agent_configs = {ac.stage: ac for ac in AgentConfig.objects.filter(project=project, enabled=True)}
 
     for stage_name in STAGE_ORDER:
@@ -58,11 +112,13 @@ async def run_pipeline(
         if not stage_cls:
             continue
 
+        # Look up the agent config for this stage, falling back to defaults
         ac = agent_configs.get(stage_name)
         agent_id = ac.agent_id if ac else "claude-code"
         prompt_strategy = ac.prompt_strategy if ac else "zero_shot"
         context_mode = ac.context_mode if ac else "full"
 
+        # Create a database record to track this stage's execution
         se = StageExecution.objects.create(
             run=run,
             stage=stage_name,
@@ -71,14 +127,17 @@ async def run_pipeline(
             started_at=datetime.now(timezone.utc),
         )
 
-        await emit({
-            "type": "stage_started",
-            "run_id": run_id,
-            "stage": stage_name,
-            "ts": _now_iso(),
-            "payload": {"agent_id": agent_id},
-        })
+        await emit(
+            {
+                "type": "stage_started",
+                "run_id": run_id,
+                "stage": stage_name,
+                "ts": _now_iso(),
+                "payload": {"agent_id": agent_id},
+            }
+        )
 
+        # Build the context object that carries all configuration to the stage
         ctx = StageContext(
             project_id=str(project.id),
             project_name=project.name,
@@ -95,32 +154,38 @@ async def run_pipeline(
             stage = stage_cls()
 
             async def stage_event_handler(evt: StageEvent) -> None:
-                await emit({
-                    "type": "stage_progress",
-                    "run_id": run_id,
-                    "stage": stage_name,
-                    "ts": _now_iso(),
-                    "payload": evt.payload,
-                })
+                """Forward stage-level progress events to the SSE stream."""
+                await emit(
+                    {
+                        "type": "stage_progress",
+                        "run_id": run_id,
+                        "stage": stage_name,
+                        "ts": _now_iso(),
+                        "payload": evt.payload,
+                    }
+                )
 
+            # Execute the stage, passing the previous stage's output
             previous_output = await stage.run(ctx, previous_output, stage_event_handler)
 
+            # Record successful completion
             se.status = "succeeded"
             se.finished_at = datetime.now(timezone.utc)
             se.output_payload = previous_output.model_dump() if previous_output else {}
-            se.latency_ms = int(
-                (se.finished_at - se.started_at).total_seconds() * 1000
-            ) if se.started_at else 0
+            se.latency_ms = int((se.finished_at - se.started_at).total_seconds() * 1000) if se.started_at else 0
             se.save()
 
-            await emit({
-                "type": "stage_completed",
-                "run_id": run_id,
-                "stage": stage_name,
-                "ts": _now_iso(),
-            })
+            await emit(
+                {
+                    "type": "stage_completed",
+                    "run_id": run_id,
+                    "stage": stage_name,
+                    "ts": _now_iso(),
+                }
+            )
 
         except Exception as e:
+            # If any stage fails, record the error, mark the run as failed, and stop
             logger.exception("Stage %s failed: %s", stage_name, e)
             se.status = "failed"
             se.finished_at = datetime.now(timezone.utc)
@@ -131,16 +196,19 @@ async def run_pipeline(
             run.finished_at = datetime.now(timezone.utc)
             run.save()
 
-            await emit({
-                "type": "stage_failed",
-                "run_id": run_id,
-                "stage": stage_name,
-                "ts": _now_iso(),
-                "payload": {"error": str(e)},
-            })
+            await emit(
+                {
+                    "type": "stage_failed",
+                    "run_id": run_id,
+                    "stage": stage_name,
+                    "ts": _now_iso(),
+                    "payload": {"error": str(e)},
+                }
+            )
             await emit({"type": "run_failed", "run_id": run_id, "ts": _now_iso()})
             return
 
+    # All stages completed successfully
     run.status = "succeeded"
     run.finished_at = datetime.now(timezone.utc)
     run.save()

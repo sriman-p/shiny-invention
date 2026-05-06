@@ -1,3 +1,18 @@
+"""
+Generate stage -- creates test code for each requirement-to-code mapping.
+
+This is the fourth stage of the pipeline. For each mapping produced by the
+map stage, it asks an AI agent to generate pytest test files that verify the
+requirement is correctly implemented by the mapped code symbol.
+
+Input: MapOutput from the map stage (requirement-to-code mappings)
+Output: GenerateOutput containing generated test files
+
+The generated tests are not written to disk at this point -- they are stored
+as structured data in the output. The critique stage will evaluate them first,
+and only after critique would they potentially be written to the project.
+"""
+
 import logging
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -19,6 +34,14 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateStage(Stage):
+    """
+    Pipeline stage that generates test code for requirement-to-code mappings.
+
+    Takes the mappings from the map stage and asks the AI agent to produce
+    pytest test files for each one. The prompt includes the mapping details
+    and any available style reference examples from the project.
+    """
+
     name = "generate"
 
     async def run(
@@ -27,6 +50,18 @@ class GenerateStage(Stage):
         previous_output: BaseModel | None,
         on_event: Callable[[StageEvent], Awaitable[None]],
     ) -> GenerateOutput:
+        """
+        Execute the generate stage.
+
+        Args:
+            ctx: Stage context with project paths, agent config, etc.
+            previous_output: Expected to be a MapOutput from the map stage.
+            on_event: Callback for emitting progress events.
+
+        Returns:
+            GenerateOutput with generated test files.
+        """
+        # Accept the map output from the previous stage, or create an empty fallback
         map_output = (
             previous_output
             if isinstance(previous_output, MapOutput)
@@ -43,6 +78,7 @@ class GenerateStage(Stage):
         schema = GenerateOutput.model_json_schema()
         template = get_prompt_template(ctx.prompt_strategy, self.name)
 
+        # Format the mappings as a readable list showing requirement -> symbol
         mappings_text = "\n".join(
             f"- {m.requirement_id} -> {m.symbol.qualified_name if m.symbol else 'unmapped'} "
             f"(confidence: {m.confidence})"
@@ -71,6 +107,7 @@ class GenerateStage(Stage):
 
         try:
             data = self.extract_json(result.text)
+            # Inject the map output if the agent didn't include it
             if "map" not in data:
                 data["map"] = map_output.model_dump()
             output = GenerateOutput.model_validate(data)
