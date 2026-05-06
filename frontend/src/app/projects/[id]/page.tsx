@@ -9,16 +9,18 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/status-badge';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
 import Link from 'next/link';
-import { Play, BarChart3, Save, Code, FileText, Loader2, FolderOpen, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Play, BarChart3, Save, Code, FileText, FolderOpen, ArrowRight, CheckCircle2 } from 'lucide-react';
 import type { AgentSpec, StageName } from '@/lib/types';
 import { toast } from 'sonner';
 
@@ -114,7 +116,7 @@ export default function ProjectDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 max-w-6xl mx-auto space-y-6">
+      <div className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
         <Skeleton className="h-8 w-48" /><Skeleton className="h-4 w-32" /><Skeleton className="h-64 w-full" />
       </div>
     );
@@ -122,25 +124,28 @@ export default function ProjectDetailPage() {
   if (!project) return <div className="p-8"><p className="text-muted-foreground">Project not found.</p></div>;
 
   return (
-    <PageWrapper className="p-8 max-w-7xl mx-auto space-y-6">
+    <PageWrapper className="p-8 max-w-7xl mx-auto flex flex-col gap-6">
       <FadeIn>
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
             <div className="flex items-center gap-2 mt-1.5 text-sm text-muted-foreground">
-              <Code className="h-3.5 w-3.5" /><span>{project.language}</span>
+              <Code className="size-3.5" /><span>{project.language}</span>
               <span className="text-muted-foreground/30">|</span><span>{project.test_framework}</span>
             </div>
           </div>
           <div className="flex gap-2">
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
               <Button onClick={() => runPipelineMutation.mutate()} disabled={runPipelineMutation.isPending}>
-                {runPipelineMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                {runPipelineMutation.isPending ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />}
                 Run pipeline
               </Button>
             </motion.div>
             <Link href={`/projects/${projectId}/sweep`}>
-              <Button variant="outline"><BarChart3 className="mr-2 h-4 w-4" />Start sweep</Button>
+              <Button variant="outline">
+                <BarChart3 data-icon="inline-start" />
+                Start sweep
+              </Button>
             </Link>
           </div>
         </div>
@@ -164,7 +169,7 @@ export default function ProjectDetailPage() {
                   <Card className="group hover:border-foreground/10 transition-colors">
                     <CardContent className="p-5">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-                        <item.icon className="h-4 w-4" />{item.label}
+                        <item.icon className="size-4" />{item.label}
                       </div>
                       <code className="text-sm font-mono bg-muted/50 px-3 py-2 rounded-md block truncate">{item.value}</code>
                     </CardContent>
@@ -184,7 +189,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
                     <Button onClick={handleSaveAgents} disabled={saveAgentsMutation.isPending || !hasUnsavedChanges} variant={hasUnsavedChanges ? 'default' : 'outline'} size="sm">
-                      {saveAgentsMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : hasUnsavedChanges ? <Save className="mr-1.5 h-3.5 w-3.5" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
+                      {saveAgentsMutation.isPending ? <Spinner data-icon="inline-start" /> : hasUnsavedChanges ? <Save data-icon="inline-start" /> : <CheckCircle2 data-icon="inline-start" />}
                       {hasUnsavedChanges ? 'Save config' : 'Saved'}
                     </Button>
                   </motion.div>
@@ -217,7 +222,11 @@ export default function ProjectDetailPage() {
                             <TableCell>
                               <Select value={config.agent_id} onValueChange={(v) => updateStageConfig(stage, 'agent_id', v)}>
                                 <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>{agents.map((a: AgentSpec) => (<SelectItem key={a.id} value={a.id} disabled={!a.available}>{a.display_name}</SelectItem>))}</SelectContent>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    {agents.map((a: AgentSpec) => (<SelectItem key={a.id} value={a.id} disabled={!a.available}>{a.display_name}</SelectItem>))}
+                                  </SelectGroup>
+                                </SelectContent>
                               </Select>
                             </TableCell>
                             <TableCell>
@@ -239,9 +248,11 @@ export default function ProjectDetailPage() {
                                 >
                                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value={DEFAULT_MODEL_VALUE}>{defaultModel ? `Default (${defaultModel})` : 'Agent default'}</SelectItem>
-                                    {modelOptions.map((model) => (<SelectItem key={model} value={model}>{model}</SelectItem>))}
-                                    <SelectItem value={CUSTOM_MODEL_VALUE}>Custom model...</SelectItem>
+                                    <SelectGroup>
+                                      <SelectItem value={DEFAULT_MODEL_VALUE}>{defaultModel ? `Default (${defaultModel})` : 'Agent default'}</SelectItem>
+                                      {modelOptions.map((model) => (<SelectItem key={model} value={model}>{model}</SelectItem>))}
+                                      <SelectItem value={CUSTOM_MODEL_VALUE}>Custom model...</SelectItem>
+                                    </SelectGroup>
                                   </SelectContent>
                                 </Select>
                                 {modelSelectValue === CUSTOM_MODEL_VALUE && (
@@ -257,13 +268,21 @@ export default function ProjectDetailPage() {
                             <TableCell>
                               <Select value={config.prompt_strategy} onValueChange={(v) => updateStageConfig(stage, 'prompt_strategy', v)}>
                                 <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>{STRATEGIES.map((s) => (<SelectItem key={s} value={s}>{s.replace(/_/g, ' ')}</SelectItem>))}</SelectContent>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    {STRATEGIES.map((s) => (<SelectItem key={s} value={s}>{s.replace(/_/g, ' ')}</SelectItem>))}
+                                  </SelectGroup>
+                                </SelectContent>
                               </Select>
                             </TableCell>
                             <TableCell>
                               <Select value={config.context_mode} onValueChange={(v) => updateStageConfig(stage, 'context_mode', v)}>
                                 <SelectTrigger className="w-[115px] h-8 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>{CONTEXT_MODES.map((m) => (<SelectItem key={m} value={m}>{m}</SelectItem>))}</SelectContent>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    {CONTEXT_MODES.map((m) => (<SelectItem key={m} value={m}>{m}</SelectItem>))}
+                                  </SelectGroup>
+                                </SelectContent>
                               </Select>
                             </TableCell>
                           </motion.tr>
@@ -294,13 +313,17 @@ function RunsList({ projectId }: { projectId: string }) {
 
   if (runs.length === 0) {
     return (
-      <Card><CardContent className="py-16 text-center">
-        <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}>
-          <FolderOpen className="h-10 w-10 text-muted-foreground/20 mx-auto mb-4" />
-        </motion.div>
-        <p className="text-sm text-muted-foreground">No runs yet</p>
-        <p className="text-xs text-muted-foreground/50 mt-1">Click &ldquo;Run pipeline&rdquo; above to start.</p>
-      </CardContent></Card>
+      <Card>
+        <CardContent className="py-16">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FolderOpen /></EmptyMedia>
+              <EmptyTitle>No runs yet</EmptyTitle>
+              <EmptyDescription>Click &ldquo;Run pipeline&rdquo; above to start.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -314,7 +337,7 @@ function RunsList({ projectId }: { projectId: string }) {
               <TableCell><Link href={`/projects/${projectId}/runs/${run.id}`} className="font-mono text-xs hover:underline">{run.id.slice(0, 8)}...</Link></TableCell>
               <TableCell><StatusBadge status={run.status} /></TableCell>
               <TableCell className="text-sm text-muted-foreground">{run.started_at ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true }) : 'Pending'}</TableCell>
-              <TableCell><Link href={`/projects/${projectId}/runs/${run.id}`}><ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" /></Link></TableCell>
+              <TableCell><Link href={`/projects/${projectId}/runs/${run.id}`}><ArrowRight className="size-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" /></Link></TableCell>
             </motion.tr>
           ))}
         </TableBody>

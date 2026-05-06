@@ -20,11 +20,11 @@ export default function AgentsSettingsPage() {
   const availableCount = agents.filter((a) => a.available).length;
 
   return (
-    <PageWrapper className="p-8 max-w-6xl mx-auto space-y-6">
+    <PageWrapper className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
       <FadeIn>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Settings className="h-5 w-5" />Agent Registry
+            <Settings className="size-5" />Agent Registry
           </h1>
           <p className="text-sm text-muted-foreground mt-1">ACP agents for pipeline execution. Install agents and set env vars to enable.</p>
         </div>
@@ -33,7 +33,7 @@ export default function AgentsSettingsPage() {
       <FadeIn>
         <div className="flex items-center gap-4 text-sm">
           <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2, ...springSmooth }} className="flex items-center gap-1.5 bg-muted/50 rounded-full px-3 py-1">
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
+            <ShieldCheck className="size-4 text-success" />
             <span><strong className="tabular-nums">{availableCount}</strong> of <strong className="tabular-nums">{agents.length}</strong> agents available</span>
           </motion.div>
         </div>
@@ -81,14 +81,14 @@ export default function AgentsSettingsPage() {
                             className="font-mono text-xs bg-muted/60 px-2 py-1 rounded inline-flex max-w-[150px] items-center gap-1.5 border border-border/50"
                             title={commandLabel}
                           >
-                            <Terminal className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                            <Terminal className="size-3 shrink-0 text-muted-foreground/60" />
                             <span className="truncate">{agent.command}</span>
                           </code>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             <Badge variant="outline" className="text-[10px] gap-1 bg-muted/30">
-                              <Cpu className="h-2.5 w-2.5" />{runnerLabel(agent.runner)}
+                              <Cpu className="size-2.5" />{runnerLabel(agent.runner)}
                             </Badge>
                             {agent.model && (
                               <Badge variant="secondary" className="text-[10px] font-mono">
@@ -100,8 +100,8 @@ export default function AgentsSettingsPage() {
                         <TableCell className="text-center">
                           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.3 + i * 0.05, type: 'spring', stiffness: 500, damping: 15 }}>
                             {agent.command_on_path
-                              ? <CircleCheck className="h-4 w-4 text-emerald-500 mx-auto" />
-                              : <CircleX className="h-4 w-4 text-rose-400 mx-auto" />}
+                              ? <CircleCheck className="size-4 text-success mx-auto" />
+                              : <CircleX className="size-4 text-destructive mx-auto" />}
                           </motion.div>
                         </TableCell>
                         <TableCell>
@@ -110,7 +110,7 @@ export default function AgentsSettingsPage() {
                               ? <span className="text-xs text-muted-foreground/40">None required</span>
                               : agent.env_required.map((env) => (
                                   <Badge key={env} variant="outline" className="text-[10px] font-mono gap-1 bg-muted/30">
-                                    <Key className="h-2.5 w-2.5" />{env}
+                                    <Key className="size-2.5" />{env}
                                   </Badge>
                                 ))
                             }
@@ -118,7 +118,7 @@ export default function AgentsSettingsPage() {
                         </TableCell>
                         <TableCell className="text-center">
                           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 + i * 0.05 }}>
-                            <Badge variant="outline" className={agent.available ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20'}>
+                            <Badge variant="outline" className={agent.available ? 'bg-success/10 text-success border-success/20' : 'bg-muted text-muted-foreground border-border'}>
                               {agent.available ? 'Available' : 'Missing'}
                             </Badge>
                           </motion.div>

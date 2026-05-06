@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
 import { StatusBadge, StageStatusIcon } from '@/components/status-badge';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
@@ -88,7 +89,7 @@ export default function RunDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 max-w-6xl mx-auto space-y-6">
+      <div className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
         <Skeleton className="h-8 w-48" />
         <div className="flex gap-2">{STAGES.map((s) => <Skeleton key={s} className="h-24 w-28" />)}</div>
         <Skeleton className="h-64 w-full" />
@@ -101,7 +102,7 @@ export default function RunDetailPage() {
   const canCancel = run.status === 'running' || run.status === 'pending';
 
   return (
-    <PageWrapper className="p-8 max-w-6xl mx-auto space-y-6">
+    <PageWrapper className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
       {/* Header */}
       <FadeIn>
         <div className="flex items-center justify-between gap-3">
@@ -118,14 +119,14 @@ export default function RunDetailPage() {
               disabled={cancelRunMutation.isPending}
               onClick={() => cancelRunMutation.mutate()}
             >
-              <Square className="h-3.5 w-3.5" />
+              {cancelRunMutation.isPending ? <Spinner data-icon="inline-start" /> : <Square data-icon="inline-start" />}
               {cancelRunMutation.isPending ? 'Stopping…' : 'Stop'}
             </Button>
           )}
         </div>
         <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <Clock className="h-3.5 w-3.5" />
+            <Clock className="size-3.5" />
             {run.started_at ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true }) : 'pending'}
           </span>
           <Separator orientation="vertical" className="h-4" />
@@ -138,7 +139,7 @@ export default function RunDetailPage() {
         <div className="relative">
           <div className="h-1 bg-muted rounded-full overflow-hidden">
             <motion.div
-              className="h-full bg-gradient-to-r from-blue-500 via-emerald-500 to-emerald-400 rounded-full"
+              className="h-full bg-gradient-to-r from-info via-success to-success rounded-full"
               initial={{ width: 0 }}
               animate={{ width: `${progressPct}%` }}
               transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
@@ -157,7 +158,7 @@ export default function RunDetailPage() {
           <div className="absolute top-1/2 left-6 right-6 h-px bg-border -translate-y-1/2 z-0" />
           {/* Progress line overlay — fills as stages complete */}
           <motion.div
-            className="absolute top-1/2 left-6 h-px bg-emerald-500/50 -translate-y-1/2 z-0"
+            className="absolute top-1/2 left-6 h-px bg-success/50 -translate-y-1/2 z-0"
             initial={{ width: 0 }}
             animate={{ width: `${progressPct}%` }}
             transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
@@ -183,7 +184,7 @@ export default function RunDetailPage() {
                   className={cn(
                     'flex flex-col items-center px-3 py-3 rounded-xl border-2 bg-card min-w-[100px] transition-colors duration-150',
                     isActive && 'border-foreground/15 shadow-sm',
-                    !isActive && status === 'running' && 'border-blue-500/30',
+                    !isActive && status === 'running' && 'border-info/30',
                     !isActive && status !== 'running' && 'border-transparent hover:border-border',
                   )}
                 >
@@ -221,7 +222,7 @@ export default function RunDetailPage() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm capitalize flex items-center gap-2">
-                  {run.status === 'running' && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" /></span>}
+                  {run.status === 'running' && <span className="relative flex size-2"><span className="animate-ping absolute inline-flex size-full rounded-full bg-success opacity-75" /><span className="relative inline-flex rounded-full size-2 bg-success" /></span>}
                   {activeStage} — stream log
                 </CardTitle>
               </CardHeader>
@@ -232,7 +233,7 @@ export default function RunDetailPage() {
                       <p className="text-sm text-muted-foreground">{run.status === 'running' ? 'Waiting for events...' : 'No events recorded.'}</p>
                     </div>
                   ) : (
-                    <div className="space-y-0 font-mono text-xs">
+                    <div className="flex flex-col gap-0 font-mono text-xs">
                       {stageEvents.map((e, i) => (
                         <motion.div
                           key={i}
@@ -243,9 +244,9 @@ export default function RunDetailPage() {
                         >
                           <span className={cn(
                             'w-28 shrink-0 font-medium',
-                            e.type.includes('completed') && 'text-emerald-500',
-                            e.type.includes('failed') && 'text-rose-500',
-                            e.type.includes('started') && 'text-blue-500',
+                            e.type.includes('completed') && 'text-success',
+                            e.type.includes('failed') && 'text-destructive',
+                            e.type.includes('started') && 'text-info',
                             e.type.includes('progress') && 'text-muted-foreground/60',
                           )}>
                             {e.type}
@@ -268,7 +269,7 @@ export default function RunDetailPage() {
                 <CardTitle className="text-sm capitalize">{activeStage} — output</CardTitle>
                 {activeStageData?.output_payload && (
                   <Button variant="ghost" size="sm" onClick={handleCopy} className="h-7 text-xs gap-1.5">
-                    {copied ? <><Check className="h-3 w-3" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                    {copied ? <><Check className="size-3" />Copied</> : <><Copy className="size-3" />Copy</>}
                   </Button>
                 )}
               </CardHeader>

@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StatusBadge } from '@/components/status-badge';
 import { PageWrapper, FadeIn, StaggerList, motion, fadeInUp, springSmooth } from '@/components/motion';
@@ -49,7 +50,7 @@ export default function DashboardPage() {
   const completedRuns = runs.filter((r) => r.status === 'succeeded').length;
 
   return (
-    <PageWrapper className="p-8 max-w-7xl mx-auto space-y-8">
+    <PageWrapper className="p-8 max-w-7xl mx-auto flex flex-col gap-8">
       {/* Header */}
       <FadeIn>
         <div className="flex items-center justify-between">
@@ -59,7 +60,10 @@ export default function DashboardPage() {
           </div>
           <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
             <Link href="/projects/new">
-              <Button><Plus className="mr-2 h-4 w-4" />New Project</Button>
+              <Button>
+                <Plus data-icon="inline-start" />
+                New Project
+              </Button>
             </Link>
           </motion.div>
         </div>
@@ -68,20 +72,18 @@ export default function DashboardPage() {
       {/* Stat cards with animated counters */}
       <div className="grid gap-4 md:grid-cols-3">
         {[
-          { title: 'Projects', value: projects.length, desc: 'Registered projects', icon: FolderOpen, color: 'text-blue-500' },
-          { title: 'Total Runs', value: runs.length, desc: `${completedRuns} succeeded`, icon: Activity, color: 'text-emerald-500' },
-          { title: 'Active', value: activeRuns, desc: 'Currently running', icon: FlaskConical, color: 'text-amber-500' },
+          { title: 'Projects', value: projects.length, desc: 'Registered projects', icon: FolderOpen },
+          { title: 'Total Runs', value: runs.length, desc: `${completedRuns} succeeded`, icon: Activity },
+          { title: 'Active', value: activeRuns, desc: 'Currently running', icon: FlaskConical },
         ].map((stat, i) => (
           <FadeIn key={stat.title} delay={i * 0.08}>
             <motion.div whileHover={{ y: -2, transition: { duration: 0.2 } }}>
               <Card className="overflow-hidden relative group">
-                {/* Subtle top accent line */}
-                <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-current to-transparent opacity-0 group-hover:opacity-30 transition-opacity duration-300 ${stat.color}`} />
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">{stat.title}</p>
-                    <div className={`h-8 w-8 rounded-md bg-muted/80 flex items-center justify-center ${stat.color}`}>
-                      <stat.icon className="h-4 w-4" />
+                    <div className="size-8 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
+                      <stat.icon className="size-4" />
                     </div>
                   </div>
                   <p className="text-3xl font-semibold mt-2 tabular-nums">
@@ -106,13 +108,13 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               {runs.length === 0 ? (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-16 text-center">
-                  <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}>
-                    <Activity className="h-10 w-10 text-muted-foreground/20 mb-4" />
-                  </motion.div>
-                  <p className="text-sm text-muted-foreground">No runs yet</p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">Create a project and run the pipeline to see results here.</p>
-                </motion.div>
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon"><Activity /></EmptyMedia>
+                    <EmptyTitle>No runs yet</EmptyTitle>
+                    <EmptyDescription>Create a project and run the pipeline to see results here.</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
               ) : (
                 <Table>
                   <TableHeader>
@@ -139,7 +141,7 @@ export default function DashboardPage() {
                         </TableCell>
                         <TableCell>
                           <Link href={`/projects/${run.project}/runs/${run.id}`}>
-                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" />
+                            <ArrowRight className="size-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" />
                           </Link>
                         </TableCell>
                       </motion.tr>
@@ -153,22 +155,30 @@ export default function DashboardPage() {
 
         {/* Projects grid */}
         <FadeIn className="lg:col-span-2">
-          <div className="space-y-3">
+          <div className="flex flex-col gap-3">
             <h2 className="text-sm font-medium text-muted-foreground px-1">Projects</h2>
             {projects.length === 0 ? (
               <Card>
-                <CardContent className="py-12 text-center">
-                  <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}>
-                    <FolderOpen className="h-10 w-10 text-muted-foreground/20 mx-auto mb-4" />
-                  </motion.div>
-                  <p className="text-sm text-muted-foreground">No projects yet</p>
-                  <Link href="/projects/new" className="mt-3 inline-block">
-                    <Button variant="outline" size="sm"><Plus className="mr-1.5 h-3.5 w-3.5" />Create your first project</Button>
-                  </Link>
+                <CardContent className="py-12">
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><FolderOpen /></EmptyMedia>
+                      <EmptyTitle>No projects yet</EmptyTitle>
+                      <EmptyDescription>Get started by creating a new project.</EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <Link href="/projects/new">
+                        <Button variant="outline" size="sm">
+                          <Plus data-icon="inline-start" />
+                          Create your first project
+                        </Button>
+                      </Link>
+                    </EmptyContent>
+                  </Empty>
                 </CardContent>
               </Card>
             ) : (
-              <StaggerList className="space-y-2">
+              <StaggerList className="flex flex-col gap-2">
                 {projects.map((project) => (
                   <motion.div key={project.id} variants={fadeInUp} transition={springSmooth}>
                     <Link href={`/projects/${project.id}`} className="block group">
@@ -176,16 +186,16 @@ export default function DashboardPage() {
                         <Card className="transition-colors duration-150 hover:border-foreground/10 hover:bg-accent/30">
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between">
-                              <div className="space-y-1 min-w-0">
+                              <div className="flex flex-col gap-1 min-w-0">
                                 <h3 className="text-sm font-medium truncate">{project.name}</h3>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <Code className="h-3 w-3 shrink-0" />
+                                  <Code className="size-3 shrink-0" />
                                   <span className="font-mono">{project.language}</span>
-                                  <span className="text-muted-foreground/30">|</span>
+                                  <Separator />
                                   <span>{project.test_framework}</span>
                                 </div>
                               </div>
-                              <ArrowRight className="h-4 w-4 text-muted-foreground/20 group-hover:text-muted-foreground/60 transition-all group-hover:translate-x-0.5 shrink-0 mt-0.5" />
+                              <ArrowRight className="size-4 text-muted-foreground/20 group-hover:text-muted-foreground/60 transition-all group-hover:translate-x-0.5 shrink-0 mt-0.5" />
                             </div>
                           </CardContent>
                         </Card>
@@ -200,4 +210,8 @@ export default function DashboardPage() {
       </div>
     </PageWrapper>
   );
+}
+
+function Separator() {
+  return <span className="text-muted-foreground/30">|</span>;
 }

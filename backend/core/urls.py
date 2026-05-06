@@ -44,6 +44,7 @@ urlpatterns = [
     path("runs/<uuid:run_id>/permissions/<str:prompt_id>", views.run_permission_resolve, name="run-permission"),
     # Sweep management
     path("sweeps/<uuid:sweep_id>", views.sweep_detail, name="sweep-detail"),
+    path("sweeps/<uuid:sweep_id>/cancel", views.sweep_cancel, name="sweep-cancel"),
     path("sweeps/<str:sweep_id>/events", views.sweep_events_stream, name="sweep-events"),
     # Utility
     path("fs/validate", views.fs_validate, name="fs-validate"),

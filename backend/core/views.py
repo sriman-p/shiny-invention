@@ -419,12 +419,52 @@ def sweep_detail(request: HttpRequest, sweep_id: UUID) -> Response:
     return Response(SweepDetailSerializer(sweep).data)
 
 
+@api_view(["POST"])
+def sweep_cancel(request: HttpRequest, sweep_id: UUID) -> Response:
+    """
+    POST /api/v1/sweeps/<sweep_id>/cancel -- Cancel a running sweep.
+
+    Cancels the sweep and all its associated runs that are still pending or
+    running. The sweep runner checks for cancellation between runs and will
+    stop processing further configurations.
+    """
+    try:
+        sweep = Sweep.objects.get(id=sweep_id)
+    except Sweep.DoesNotExist:
+        return Response({"error": "Sweep not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if sweep.status in {"pending", "running"}:
+        sweep.status = "cancelled"
+        sweep.save()
+
+        # Cancel all pending/running runs associated with this sweep
+        for run in sweep.runs.filter(status__in=["pending", "running"]):
+            run.status = "cancelled"
+            run.finished_at = timezone.now()
+            run.save()
+            # Notify run SSE subscribers
+            _broadcast(str(run.id), {
+                "type": "run_cancelled",
+                "run_id": str(run.id),
+                "ts": timezone.now().isoformat(),
+            })
+
+        # Notify sweep SSE subscribers so the stream terminates
+        _broadcast(f"sweep-{sweep_id}", {
+            "type": "sweep_cancelled",
+            "sweep_id": str(sweep_id),
+            "ts": timezone.now().isoformat(),
+        })
+
+    return Response(SweepDetailSerializer(sweep).data)
+
+
 def sweep_events_stream(request: HttpRequest, sweep_id: str) -> StreamingHttpResponse:
     """
     GET /api/v1/sweeps/<sweep_id>/events -- SSE endpoint for real-time sweep progress.
 
     Works the same as run_events_stream but subscribes to "sweep-{sweep_id}" events.
-    Terminates when sweep_succeeded or sweep_failed is received.
+    Terminates when sweep_succeeded, sweep_failed, or sweep_cancelled is received.
     """
     q = _subscribe(f"sweep-{sweep_id}")
 
@@ -434,7 +474,7 @@ def sweep_events_stream(request: HttpRequest, sweep_id: str) -> StreamingHttpRes
                 try:
                     event = q.get(timeout=30)
                     yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("type") in ("sweep_succeeded", "sweep_failed"):
+                    if event.get("type") in ("sweep_succeeded", "sweep_failed", "sweep_cancelled"):
                         break
                 except queue.Empty:
                     yield ": keepalive\n\n"

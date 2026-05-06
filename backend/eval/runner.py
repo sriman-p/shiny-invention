@@ -122,6 +122,11 @@ async def run_sweep(
         run_obj.refresh_from_db()
         return {"stages": list(run_obj.stages.values("stage", "output_payload", "latency_ms", "token_usage"))}
 
+    @sync_to_async
+    def check_cancelled() -> bool:
+        """Reload the sweep from DB to check if it was cancelled via the API."""
+        return Sweep.objects.filter(id=sweep_id, status="cancelled").exists()
+
     sweep = await load_sweep()
 
     async def emit(event: dict[str, Any]) -> None:
@@ -141,8 +146,15 @@ async def run_sweep(
 
     # Accumulate metrics from all runs for statistical analysis
     all_metrics = []
+    was_cancelled = False
 
     for i, config in enumerate(sweep.matrix):
+        # Check if the sweep was cancelled between runs
+        if await check_cancelled():
+            was_cancelled = True
+            logger.info("Sweep %s was cancelled, stopping at config %d", sweep_id, i)
+            break
+
         # Extract configuration values, with safe defaults for malformed entries
         strategy = config.get("prompt_strategy", "zero_shot") if isinstance(config, dict) else "zero_shot"
         context_mode = config.get("context_mode", "full") if isinstance(config, dict) else "full"
@@ -174,6 +186,12 @@ async def run_sweep(
         except Exception as e:
             logger.exception("Sweep run %s failed: %s", run.id, e)
 
+        # Check again after the run completes
+        if await check_cancelled():
+            was_cancelled = True
+            logger.info("Sweep %s was cancelled after run %s", sweep_id, run.id)
+            break
+
         # Compute metrics from the completed run's stage data
         run_data = await collect_run_data(run)
         metrics = compute_metrics(run_data)
@@ -194,6 +212,15 @@ async def run_sweep(
                 "metrics": metrics,
             }
         )
+
+    if was_cancelled:
+        # Store partial results if any
+        if all_metrics:
+            sweep = await load_sweep()
+            sweep.metrics_summary = all_metrics
+            await save_sweep(sweep)
+        await emit({"type": "sweep_cancelled", "sweep_id": sweep_id})
+        return
 
     # Perform statistical analysis comparing all configurations
     stats = run_statistical_analysis(all_metrics)

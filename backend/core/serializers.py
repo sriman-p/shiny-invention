@@ -130,7 +130,10 @@ class RunListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Run
-        fields = ["id", "project", "project_name", "status", "config_snapshot", "started_at", "finished_at", "created_at"]
+        fields = [
+            "id", "project", "project_name", "status", "config_snapshot",
+            "started_at", "finished_at", "created_at",
+        ]
 
 
 class RunDetailSerializer(serializers.ModelSerializer):
@@ -162,6 +165,38 @@ class RunDetailSerializer(serializers.ModelSerializer):
         ]
 
 
+class SweepRunStageSerializer(serializers.ModelSerializer):
+    """
+    Minimal stage serializer for sweep run entries.
+
+    Only includes stage name and status — just enough for the frontend
+    to render mini stage progress dots without the heavy payloads.
+    """
+
+    class Meta:
+        model = StageExecution
+        fields = ["stage", "status", "latency_ms"]
+
+
+class SweepRunSerializer(serializers.ModelSerializer):
+    """
+    Serializer for runs within a sweep detail view.
+
+    Includes config_snapshot for displaying which strategy/context each run used,
+    and a lightweight stages list for mini stage progress indicators.
+    """
+
+    project_name = serializers.CharField(source="project.name", read_only=True)
+    stages = SweepRunStageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Run
+        fields = [
+            "id", "project", "project_name", "status", "config_snapshot",
+            "started_at", "finished_at", "created_at", "stages",
+        ]
+
+
 class SweepListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for listing sweeps.
@@ -179,11 +214,12 @@ class SweepDetailSerializer(serializers.ModelSerializer):
     """
     Full serializer for a single sweep detail view.
 
-    Nests all associated runs (using RunListSerializer) so the frontend
-    can display individual run results alongside the aggregated statistics.
+    Nests all associated runs (using SweepRunSerializer) so the frontend
+    can display individual run results with stage progress alongside the
+    aggregated statistics.
     """
 
-    runs = RunListSerializer(many=True, read_only=True)
+    runs = SweepRunSerializer(many=True, read_only=True)
 
     class Meta:
         model = Sweep

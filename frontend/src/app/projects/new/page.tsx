@@ -10,8 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Alert } from '@/components/ui/alert';
-import { FolderPlus, CircleCheck, CircleX, Loader2 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
+import { FolderPlus, CircleCheck, CircleX } from 'lucide-react';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 
 export default function NewProjectPage() {
@@ -59,18 +60,21 @@ export default function NewProjectPage() {
         <motion.div whileHover={{ y: -1 }} transition={{ duration: 0.2 }}>
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2"><FolderPlus className="h-4 w-4" />Project details</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2">
+                <FolderPlus className="size-4" />
+                Project details
+              </CardTitle>
               <CardDescription>Provide the project name and absolute filesystem paths.</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15, ...springSmooth }} className="space-y-2">
+              <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15, ...springSmooth }} className="flex flex-col gap-2">
                   <Label htmlFor="name">Project name</Label>
                   <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project" required className="font-mono text-sm" />
                   <p className="text-xs text-muted-foreground/60">Must be unique across all projects.</p>
                 </motion.div>
 
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, ...springSmooth }} className="space-y-2">
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, ...springSmooth }} className="flex flex-col gap-2">
                   <Label htmlFor="code_path">Code directory</Label>
                   <div className="relative">
                     <Input id="code_path" value={codePath} onChange={(e) => { setCodePath(e.target.value); setCodePathValid(null); }} onBlur={() => validatePath(codePath, setCodePathValid)} placeholder="/absolute/path/to/code" required className="font-mono text-sm pr-9" />
@@ -79,7 +83,7 @@ export default function NewProjectPage() {
                   <p className="text-xs text-muted-foreground/60">Absolute path to the source code directory.</p>
                 </motion.div>
 
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, ...springSmooth }} className="space-y-2">
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, ...springSmooth }} className="flex flex-col gap-2">
                   <Label htmlFor="req_path">Requirements document</Label>
                   <div className="relative">
                     <Input id="req_path" value={reqPath} onChange={(e) => { setReqPath(e.target.value); setReqPathValid(null); }} onBlur={() => validatePath(reqPath, setReqPathValid)} placeholder="/absolute/path/to/requirements.md" required className="font-mono text-sm pr-9" />
@@ -90,13 +94,16 @@ export default function NewProjectPage() {
 
                 {error && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                    <Alert variant="destructive" className="text-sm">{error}</Alert>
+                    <Alert variant="destructive">
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                   </motion.div>
                 )}
 
                 <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
                   <Button type="submit" disabled={loading} className="w-full">
-                    {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Creating...</> : 'Create project'}
+                    {loading && <Spinner data-icon="inline-start" />}
+                    {loading ? 'Creating…' : 'Create project'}
                   </Button>
                 </motion.div>
               </form>
@@ -112,7 +119,7 @@ function PathValidationIcon({ valid }: { valid: boolean | null }) {
   if (valid === null) return null;
   return (
     <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 15 }} className="absolute right-2.5 top-1/2 -translate-y-1/2">
-      {valid ? <CircleCheck className="h-4 w-4 text-emerald-500" /> : <CircleX className="h-4 w-4 text-rose-500" />}
+      {valid ? <CircleCheck className="size-4 text-success" /> : <CircleX className="size-4 text-destructive" />}
     </motion.div>
   );
 }

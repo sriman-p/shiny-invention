@@ -50,6 +50,7 @@ export const api = {
       body: JSON.stringify({ matrix }),
     }),
   getSweep: (id: string) => request<Sweep>(`/sweeps/${id}`),
+  cancelSweep: (sweepId: string) => request<Sweep>(`/sweeps/${sweepId}/cancel`, { method: 'POST', body: '{}' }),
   getSweepEventsUrl: (sweepId: string) => `${API_BASE_URL}/sweeps/${sweepId}/events`,
   validatePath: (path: string) => request<{ path: string; exists: boolean }>(`/fs/validate?path=${encodeURIComponent(path)}`),
 };
