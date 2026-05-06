@@ -2,24 +2,43 @@
 
 ## Cursor Cloud specific instructions
 
-This is a Python project (skeleton/new). The `.gitignore` is configured for Python with Django, Flask, Celery, Redis, and RabbitMQ patterns.
+ReqLens is a requirement-traced test generation tool: Django 5.x backend + Next.js 15 frontend monorepo.
 
-### Environment
+### Services
 
-- **Python**: 3.12 (system), virtual environment at `.venv/`
-- **Package manager**: pip (no `requirements.txt` or `pyproject.toml` committed yet)
-- Activate the venv before any Python command: `source .venv/bin/activate`
+| Service | Command | Port |
+|---------|---------|------|
+| Backend (Django) | `make dev-backend` or `cd backend && uv run python manage.py runserver 8000` | 8000 |
+| Frontend (Next.js) | `make dev-frontend` or `cd frontend && pnpm dev` | 3000 |
 
-### Dev tooling available in the venv
+### Common tasks
 
-| Tool | Purpose | Command |
-|------|---------|---------|
-| ruff | Linting & formatting | `ruff check .` / `ruff format .` |
-| mypy | Type checking | `mypy --ignore-missing-imports .` |
-| pytest | Testing | `pytest` |
+- `make install` — install all dependencies (backend + frontend)
+- `make migrate` — run Django migrations
+- `make seed` — seed benchmark projects (calculator, url-shortener, todo-api)
+- `make test` — run backend pytest + frontend lint
+- `make lint` — ruff + ruff format check (backend) + eslint (frontend)
+
+### Backend details
+
+- Managed with `uv`; virtual env at `backend/.venv/`
+- Always prefix backend commands with `cd backend && uv run ...`
+- SQLite database at `backend/data/reqlens.db` — auto-created on migrate
+- Lint: `cd backend && uv run ruff check .` — migrations excluded in pyproject.toml
+- Tests: `cd backend && uv run pytest -v`
+- All LLM interactions use ACP (Agent Client Protocol); no direct SDK calls
+
+### Frontend details
+
+- Next.js 15 (App Router) + React 19 + shadcn/ui (v4) + Tailwind v4
+- Package manager: pnpm
+- Lint: `cd frontend && pnpm lint`
+- Build: `cd frontend && pnpm build`
 
 ### Gotchas
 
-- The base VM image may not have `python3.12-venv` installed. The update script handles creating the venv if missing.
-- There is no application code yet — all lint/type/test commands will report "no files" until source files are added.
-- When a `requirements.txt` or `pyproject.toml` is added to the repo, the update script will automatically install dependencies from it.
+- The VM may not have `python3.12-venv` pre-installed; the update script handles this.
+- Node.js must be >=22; installed via nodesource. pnpm installed globally via npm.
+- ACP agents (claude-code, codex, gemini, etc.) are not installed in the Cloud VM; the Agent Registry page shows them as "Missing" which is expected. The app functions fully for configuration and UI work without them.
+- Django runs in a background thread for pipeline execution (no Celery). Long-running operations won't block the dev server.
+- The `geist` font package provides both sans and mono fonts used in the frontend layout.

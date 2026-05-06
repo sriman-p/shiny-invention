@@ -1,0 +1,16 @@
+# Dev-only compose file. Default is SQLite; Postgres optional.
+# To use: docker compose up db
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: reqlens
+      POSTGRES_USER: reqlens
+      POSTGRES_PASSWORD: reqlens
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
