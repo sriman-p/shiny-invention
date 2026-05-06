@@ -29,6 +29,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from asgiref.sync import sync_to_async
 from pydantic import BaseModel
 
 from .stages import STAGE_CLASSES, STAGE_ORDER
@@ -72,7 +73,41 @@ async def run_pipeline(
 
     from core.models import AgentConfig, Run, StageExecution
 
-    run = Run.objects.select_related("project").get(id=run_id)
+    @sync_to_async
+    def load_run() -> Run:
+        """Load the run and related project outside the async event loop."""
+        return Run.objects.select_related("project").get(id=run_id)
+
+    @sync_to_async
+    def save_run(run_obj: Run) -> None:
+        run_obj.save()
+
+    @sync_to_async
+    def load_agent_configs(project_id: str) -> dict[str, dict[str, str]]:
+        return {
+            ac.stage: {
+                "agent_id": ac.agent_id,
+                "prompt_strategy": ac.prompt_strategy,
+                "context_mode": ac.context_mode,
+            }
+            for ac in AgentConfig.objects.filter(project_id=project_id, enabled=True)
+        }
+
+    @sync_to_async
+    def create_stage_execution(stage_name: str, agent_id: str) -> StageExecution:
+        return StageExecution.objects.create(
+            run_id=run_id,
+            stage=stage_name,
+            agent_id=agent_id,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+    @sync_to_async
+    def save_stage_execution(stage_execution: StageExecution) -> None:
+        stage_execution.save()
+
+    run = await load_run()
     project = run.project
 
     async def emit(event: dict[str, Any]) -> None:
@@ -96,7 +131,7 @@ async def run_pipeline(
     # Mark the run as running and record the start time
     run.status = "running"
     run.started_at = datetime.now(timezone.utc)
-    run.save()
+    await save_run(run)
 
     await emit({"type": "run_started", "run_id": run_id, "ts": _now_iso()})
 
@@ -105,7 +140,7 @@ async def run_pipeline(
     previous_output: BaseModel | None = None
 
     # Load agent configs for all enabled stages, keyed by stage name
-    agent_configs = {ac.stage: ac for ac in AgentConfig.objects.filter(project=project, enabled=True)}
+    agent_configs = await load_agent_configs(str(project.id))
 
     for stage_name in STAGE_ORDER:
         stage_cls = STAGE_CLASSES.get(stage_name)
@@ -114,18 +149,12 @@ async def run_pipeline(
 
         # Look up the agent config for this stage, falling back to defaults
         ac = agent_configs.get(stage_name)
-        agent_id = ac.agent_id if ac else "claude-code"
-        prompt_strategy = ac.prompt_strategy if ac else "zero_shot"
-        context_mode = ac.context_mode if ac else "full"
+        agent_id = ac["agent_id"] if ac else "claude-code"
+        prompt_strategy = ac["prompt_strategy"] if ac else "zero_shot"
+        context_mode = ac["context_mode"] if ac else "full"
 
         # Create a database record to track this stage's execution
-        se = StageExecution.objects.create(
-            run=run,
-            stage=stage_name,
-            agent_id=agent_id,
-            status="running",
-            started_at=datetime.now(timezone.utc),
-        )
+        se = await create_stage_execution(stage_name, agent_id)
 
         await emit(
             {
@@ -173,7 +202,7 @@ async def run_pipeline(
             se.finished_at = datetime.now(timezone.utc)
             se.output_payload = previous_output.model_dump() if previous_output else {}
             se.latency_ms = int((se.finished_at - se.started_at).total_seconds() * 1000) if se.started_at else 0
-            se.save()
+            await save_stage_execution(se)
 
             await emit(
                 {
@@ -190,11 +219,11 @@ async def run_pipeline(
             se.status = "failed"
             se.finished_at = datetime.now(timezone.utc)
             se.error = str(e)
-            se.save()
+            await save_stage_execution(se)
 
             run.status = "failed"
             run.finished_at = datetime.now(timezone.utc)
-            run.save()
+            await save_run(run)
 
             await emit(
                 {
@@ -211,6 +240,6 @@ async def run_pipeline(
     # All stages completed successfully
     run.status = "succeeded"
     run.finished_at = datetime.now(timezone.utc)
-    run.save()
+    await save_run(run)
 
     await emit({"type": "run_succeeded", "run_id": run_id, "ts": _now_iso()})

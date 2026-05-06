@@ -29,6 +29,8 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 # Base directory for the backend: /workspace/backend/
 BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # The default is only suitable for development.
@@ -101,7 +103,7 @@ WSGI_APPLICATION = "reqlens.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "data" / "reqlens.db",
+        "NAME": DATA_DIR / "reqlens.db",
     }
 }
 
@@ -153,7 +155,7 @@ LOGGING = {
         "file": {
             "level": "DEBUG",
             "class": "logging.FileHandler",
-            "filename": BASE_DIR / "data" / "reqlens.log",
+            "filename": DATA_DIR / "reqlens.log",
             "formatter": "json",
         },
         "console": {
