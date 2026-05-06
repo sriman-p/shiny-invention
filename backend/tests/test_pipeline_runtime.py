@@ -54,7 +54,7 @@ def test_sweep_runs_use_isolated_artifact_directories(monkeypatch, tmp_path):
         matrix=[{"prompt_strategy": "zero_shot", "context_mode": "full", "agent_id": "claude-code"}],
     )
 
-    async def fake_run_pipeline(run_id: str) -> None:
+    async def fake_run_pipeline(run_id: str, **_kwargs) -> None:
         run = await Run.objects.aget(id=run_id)
         run.status = "succeeded"
         await run.asave()

@@ -3,10 +3,12 @@ Real retrieval tests against the actual benchmark projects.
 Runs BM25 on the calculator, url-shortener, and todo-api codebases.
 Measures precision: does querying a requirement surface the right code file?
 """
-import time
-import pytest
+
 from pathlib import Path
-from pipeline.retrieval import Retriever, Hit
+
+import pytest
+
+from pipeline.retrieval import Retriever
 
 BENCHMARK = Path(__file__).parent.parent.parent / "benchmark" / "projects"
 

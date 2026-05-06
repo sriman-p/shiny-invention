@@ -49,6 +49,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ matrix }),
     }),
+  getProjectSweeps: (projectId: string) => request<Sweep[]>(`/projects/${projectId}/sweeps`),
   getSweep: (id: string) => request<Sweep>(`/sweeps/${id}`),
   cancelSweep: (sweepId: string) => request<Sweep>(`/sweeps/${sweepId}/cancel`, { method: 'POST', body: '{}' }),
   getSweepEventsUrl: (sweepId: string) => `${API_BASE_URL}/sweeps/${sweepId}/events`,

@@ -42,6 +42,7 @@ from .serializers import (
     RunDetailSerializer,
     RunListSerializer,
     SweepDetailSerializer,
+    SweepListSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ def project_agents_update(request: HttpRequest, project_id: UUID) -> Response:
             project=project,
             stage=cfg["stage"],
             defaults={
-                "agent_id": cfg.get("agent_id", "claude-code"),
+                "agent_id": cfg.get("agent_id", "codex"),
                 "model_id": cfg.get("model_id") or "",
                 "prompt_strategy": cfg.get("prompt_strategy", "zero_shot"),
                 "context_mode": cfg.get("context_mode", "full"),
@@ -214,6 +215,20 @@ def project_runs_create(request: HttpRequest, project_id: UUID) -> Response:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
     permissions = request.data.get("permissions", "auto") if request.data else "auto"
+    existing_configs = list(project.agents.filter(enabled=True))
+    if not existing_configs:
+        for stage_name in ["parse", "analyze", "map", "generate", "critique", "trace"]:
+            AgentConfig.objects.update_or_create(
+                project=project,
+                stage=stage_name,
+                defaults={
+                    "agent_id": "codex",
+                    "model_id": "gpt-5.5/low",
+                    "prompt_strategy": "zero_shot",
+                    "context_mode": "full",
+                    "enabled": True,
+                },
+            )
     agent_configs = AgentConfigSerializer(project.agents.filter(enabled=True), many=True).data
     config_snapshot = {
         "permissions": permissions,
@@ -244,6 +259,11 @@ def project_runs_create(request: HttpRequest, project_id: UUID) -> Response:
             )
         except Exception as e:
             logger.exception("Pipeline run %s failed: %s", run.id, e)
+            Run.objects.filter(id=run.id, status__in=["pending", "running"]).update(
+                status="failed",
+                finished_at=timezone.now(),
+            )
+            _broadcast(str(run.id), {"type": "run_failed", "run_id": str(run.id), "payload": {"error": str(e)}})
 
     t = threading.Thread(target=_run_in_thread, daemon=True)
     t.start()
@@ -356,17 +376,21 @@ def run_cancel(request: HttpRequest, run_id: UUID) -> Response:
         run.finished_at = timezone.now()
         run.save()
         # Notify SSE subscribers so the stream terminates immediately
-        _broadcast(str(run_id), {
-            "type": "run_cancelled",
-            "run_id": str(run_id),
-            "ts": timezone.now().isoformat(),
-        })
+        _broadcast(
+            str(run_id),
+            {
+                "type": "run_cancelled",
+                "run_id": str(run_id),
+                "ts": timezone.now().isoformat(),
+            },
+        )
     return Response(RunDetailSerializer(run).data)
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 def sweeps_create(request: HttpRequest, project_id: UUID) -> Response:
     """
+    GET  /api/v1/projects/<project_id>/sweeps -- List sweeps for a project.
     POST /api/v1/projects/<project_id>/sweeps -- Start a parameter sweep.
 
     Accepts a "matrix" array where each entry specifies a configuration
@@ -381,7 +405,14 @@ def sweeps_create(request: HttpRequest, project_id: UUID) -> Response:
     except Project.DoesNotExist:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    if request.method == "GET":
+        sweeps = project.sweeps.all().order_by("-created_at")
+        return Response(SweepListSerializer(sweeps, many=True).data)
+
     matrix = request.data.get("matrix", []) if request.data else []
+    if not matrix:
+        return Response({"error": "Sweep matrix cannot be empty"}, status=status.HTTP_400_BAD_REQUEST)
+
     sweep = Sweep.objects.create(project=project, matrix=matrix)
 
     import asyncio
@@ -399,6 +430,11 @@ def sweeps_create(request: HttpRequest, project_id: UUID) -> Response:
             )
         except Exception as e:
             logger.exception("Sweep %s failed: %s", sweep.id, e)
+            Sweep.objects.filter(id=sweep.id, status__in=["pending", "running"]).update(status="failed")
+            _broadcast(
+                f"sweep-{sweep.id}",
+                {"type": "sweep_failed", "sweep_id": str(sweep.id), "payload": {"error": str(e)}},
+            )
 
     t = threading.Thread(target=_run_sweep_thread, daemon=True)
     t.start()
@@ -443,18 +479,24 @@ def sweep_cancel(request: HttpRequest, sweep_id: UUID) -> Response:
             run.finished_at = timezone.now()
             run.save()
             # Notify run SSE subscribers
-            _broadcast(str(run.id), {
-                "type": "run_cancelled",
-                "run_id": str(run.id),
-                "ts": timezone.now().isoformat(),
-            })
+            _broadcast(
+                str(run.id),
+                {
+                    "type": "run_cancelled",
+                    "run_id": str(run.id),
+                    "ts": timezone.now().isoformat(),
+                },
+            )
 
         # Notify sweep SSE subscribers so the stream terminates
-        _broadcast(f"sweep-{sweep_id}", {
-            "type": "sweep_cancelled",
-            "sweep_id": str(sweep_id),
-            "ts": timezone.now().isoformat(),
-        })
+        _broadcast(
+            f"sweep-{sweep_id}",
+            {
+                "type": "sweep_cancelled",
+                "sweep_id": str(sweep_id),
+                "ts": timezone.now().isoformat(),
+            },
+        )
 
     return Response(SweepDetailSerializer(sweep).data)
 

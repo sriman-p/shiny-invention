@@ -57,6 +57,7 @@ export interface StageExecution {
   finished_at: string | null;
   input_payload: Record<string, unknown> | null;
   output_payload: Record<string, unknown> | null;
+  raw_updates: Record<string, unknown>[];
   error: string;
   token_usage: Record<string, number>;
   latency_ms: number | null;
@@ -75,13 +76,36 @@ export interface Run {
   stages?: StageExecution[];
 }
 
+export interface SweepMetric {
+  prompt_strategy?: string;
+  context_mode?: string;
+  agent_id?: string;
+  model_id?: string;
+  run_id?: string;
+  traceability_score?: number;
+  strict_coverage_score?: number;
+  critique_accept_rate?: number;
+  critique_mean_score?: number;
+  quality_score?: number;
+  latency_total_ms?: number;
+  tokens_total?: number;
+  total_requirements?: number;
+  generated_tests_count?: number;
+  completed_stages?: number;
+  failed_stages?: number;
+  output_bytes?: number;
+  rank?: number;
+  is_winner?: boolean;
+  [key: string]: unknown;
+}
+
 export interface Sweep {
   id: string;
   project: string;
   matrix: Record<string, string>[];
   status: RunStatus;
   runs?: Run[];
-  metrics_summary: JsonValue[] | null;
+  metrics_summary: SweepMetric[] | null;
   stats_report: JsonValue | null;
   created_at: string;
 }

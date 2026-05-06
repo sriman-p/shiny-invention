@@ -3,9 +3,9 @@ Tests for context mode builder and prompt template system.
 Validates that different modes produce correctly structured output
 and that all 4 strategies x 6 stages have templates.
 """
-import pytest
-from pipeline.context_modes import build_context, CONTEXT_MODES
-from pipeline.prompts import get_prompt_template, PROMPT_STRATEGIES
+
+from pipeline.context_modes import CONTEXT_MODES, build_context
+from pipeline.prompts import PROMPT_STRATEGIES, get_prompt_template
 
 
 class TestContextModes:
@@ -27,13 +27,16 @@ class TestContextModes:
         assert "S" in result
 
     def test_module_includes_full_module(self):
-        result = build_context("module", requirement_text="R", symbol_text="S", module_text="import os\nclass Foo: pass")
+        result = build_context(
+            "module", requirement_text="R", symbol_text="S", module_text="import os\nclass Foo: pass"
+        )
         assert "import os" in result
         assert "class Foo" in result
 
     def test_full_includes_project_summary(self):
-        result = build_context("full", requirement_text="R", symbol_text="S",
-                               module_text="code here", project_summary="A calculator app")
+        result = build_context(
+            "full", requirement_text="R", symbol_text="S", module_text="code here", project_summary="A calculator app"
+        )
         assert "A calculator app" in result
         assert "code here" in result
         assert "R" in result
@@ -43,10 +46,15 @@ class TestContextModes:
         lengths = {}
         for mode in CONTEXT_MODES:
             result = build_context(
-                mode, requirement_text="requirement text here",
+                mode,
+                requirement_text="requirement text here",
                 symbol_text="def add(a, b): return a + b",
                 siblings="def subtract(a, b): return a - b",
-                module_text="import math\n\nclass Calculator:\n    def add(a, b): return a + b\n    def subtract(a, b): return a - b",
+                module_text=(
+                    "import math\n\nclass Calculator:\n"
+                    "    def add(a, b): return a + b\n"
+                    "    def subtract(a, b): return a - b"
+                ),
                 project_summary="This is a calculator application that performs basic arithmetic.",
             )
             lengths[mode] = len(result)

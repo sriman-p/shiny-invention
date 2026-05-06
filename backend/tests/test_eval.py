@@ -2,10 +2,11 @@
 Tests for the evaluation engine: metrics computation and statistical analysis.
 Uses realistic data structures to validate the eval pipeline end-to-end.
 """
-import pytest
+
 import numpy as np
-from eval.metrics import compute_metrics
-from eval.stats import run_statistical_analysis, generate_markdown_report
+
+from eval.metrics import compute_metrics, rank_metrics
+from eval.stats import generate_markdown_report, run_statistical_analysis
 
 
 class TestComputeMetrics:
@@ -18,98 +19,217 @@ class TestComputeMetrics:
         assert result["latency_total_ms"] == 0
 
     def test_traceability_all_covered(self):
-        result = compute_metrics({"stages": [
-            {"stage": "trace", "output_payload": {"matrix": [
-                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                {"requirement_id": "REQ-002", "coverage_status": "covered"},
-                {"requirement_id": "REQ-003", "coverage_status": "covered"},
-            ]}, "latency_ms": 100, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-002", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-003", "coverage_status": "covered"},
+                            ]
+                        },
+                        "latency_ms": 100,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
         assert result["traceability_score"] == 1.0
 
     def test_traceability_mixed(self):
-        result = compute_metrics({"stages": [
-            {"stage": "trace", "output_payload": {"matrix": [
-                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                {"requirement_id": "REQ-002", "coverage_status": "partial"},
-                {"requirement_id": "REQ-003", "coverage_status": "uncovered"},
-                {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
-            ]}, "latency_ms": 0, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-002", "coverage_status": "partial"},
+                                {"requirement_id": "REQ-003", "coverage_status": "uncovered"},
+                                {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
         assert result["traceability_score"] == 0.5  # 2 out of 4
 
     def test_traceability_none_covered(self):
-        result = compute_metrics({"stages": [
-            {"stage": "trace", "output_payload": {"matrix": [
-                {"requirement_id": "REQ-001", "coverage_status": "uncovered"},
-                {"requirement_id": "REQ-002", "coverage_status": "uncovered"},
-            ]}, "latency_ms": 0, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {"requirement_id": "REQ-001", "coverage_status": "uncovered"},
+                                {"requirement_id": "REQ-002", "coverage_status": "uncovered"},
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
         assert result["traceability_score"] == 0.0
 
     def test_critique_accept_rate(self):
-        result = compute_metrics({"stages": [
-            {"stage": "critique", "output_payload": {"scores": [
-                {"decision": "accept"},
-                {"decision": "accept"},
-                {"decision": "revise"},
-                {"decision": "reject"},
-            ]}, "latency_ms": 200, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {
+                        "stage": "critique",
+                        "output_payload": {
+                            "scores": [
+                                {"decision": "accept"},
+                                {"decision": "accept"},
+                                {"decision": "revise"},
+                                {"decision": "reject"},
+                            ]
+                        },
+                        "latency_ms": 200,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
         assert result["critique_accept_rate"] == 0.5  # 2 of 4
 
     def test_critique_all_accept(self):
-        result = compute_metrics({"stages": [
-            {"stage": "critique", "output_payload": {"scores": [
-                {"decision": "accept"},
-                {"decision": "accept"},
-                {"decision": "accept"},
-            ]}, "latency_ms": 0, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {
+                        "stage": "critique",
+                        "output_payload": {
+                            "scores": [
+                                {"decision": "accept"},
+                                {"decision": "accept"},
+                                {"decision": "accept"},
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
         assert result["critique_accept_rate"] == 1.0
 
     def test_latency_sums(self):
-        result = compute_metrics({"stages": [
-            {"stage": "parse", "latency_ms": 100, "token_usage": {}},
-            {"stage": "analyze", "latency_ms": 200, "token_usage": {}},
-            {"stage": "map", "latency_ms": 300, "token_usage": {}},
-            {"stage": "generate", "latency_ms": 400, "token_usage": {}},
-            {"stage": "critique", "latency_ms": 150, "token_usage": {}},
-            {"stage": "trace", "latency_ms": 50, "token_usage": {}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {"stage": "parse", "latency_ms": 100, "token_usage": {}},
+                    {"stage": "analyze", "latency_ms": 200, "token_usage": {}},
+                    {"stage": "map", "latency_ms": 300, "token_usage": {}},
+                    {"stage": "generate", "latency_ms": 400, "token_usage": {}},
+                    {"stage": "critique", "latency_ms": 150, "token_usage": {}},
+                    {"stage": "trace", "latency_ms": 50, "token_usage": {}},
+                ]
+            }
+        )
         assert result["latency_total_ms"] == 1200
 
     def test_token_usage_sums(self):
-        result = compute_metrics({"stages": [
-            {"stage": "parse", "latency_ms": 0, "token_usage": {"input": 500, "output": 200}},
-            {"stage": "analyze", "latency_ms": 0, "token_usage": {"input": 800, "output": 400}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {"stage": "parse", "latency_ms": 0, "token_usage": {"input": 500, "output": 200}},
+                    {"stage": "analyze", "latency_ms": 0, "token_usage": {"input": 800, "output": 400}},
+                ]
+            }
+        )
         assert result["tokens_total"] == 1900
 
     def test_full_realistic_run(self):
         """Simulate a realistic complete 6-stage run."""
-        result = compute_metrics({"stages": [
-            {"stage": "parse", "latency_ms": 2100, "token_usage": {"input": 1200, "output": 800}},
-            {"stage": "analyze", "latency_ms": 5400, "token_usage": {"input": 3000, "output": 2500}},
-            {"stage": "map", "latency_ms": 3200, "token_usage": {"input": 2800, "output": 1500}},
-            {"stage": "generate", "latency_ms": 8700, "token_usage": {"input": 4500, "output": 6000}},
-            {"stage": "critique", "output_payload": {"scores": [
-                {"decision": "accept"}, {"decision": "accept"},
-                {"decision": "revise"}, {"decision": "accept"},
-                {"decision": "reject"},
-            ]}, "latency_ms": 4100, "token_usage": {"input": 3500, "output": 2000}},
-            {"stage": "trace", "output_payload": {"matrix": [
-                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                {"requirement_id": "REQ-002", "coverage_status": "covered"},
-                {"requirement_id": "REQ-003", "coverage_status": "partial"},
-                {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
-                {"requirement_id": "REQ-005", "coverage_status": "covered"},
-            ]}, "latency_ms": 1800, "token_usage": {"input": 1500, "output": 900}},
-        ]})
+        result = compute_metrics(
+            {
+                "stages": [
+                    {"stage": "parse", "latency_ms": 2100, "token_usage": {"input": 1200, "output": 800}},
+                    {"stage": "analyze", "latency_ms": 5400, "token_usage": {"input": 3000, "output": 2500}},
+                    {"stage": "map", "latency_ms": 3200, "token_usage": {"input": 2800, "output": 1500}},
+                    {"stage": "generate", "latency_ms": 8700, "token_usage": {"input": 4500, "output": 6000}},
+                    {
+                        "stage": "critique",
+                        "output_payload": {
+                            "scores": [
+                                {"decision": "accept", "relevance": 5, "completeness": 5, "correctness": 4},
+                                {"decision": "accept", "relevance": 5, "completeness": 4, "correctness": 4},
+                                {"decision": "revise", "relevance": 4, "completeness": 3, "correctness": 3},
+                                {"decision": "accept", "relevance": 5, "completeness": 5, "correctness": 5},
+                                {"decision": "reject", "relevance": 2, "completeness": 2, "correctness": 1},
+                            ]
+                        },
+                        "latency_ms": 4100,
+                        "token_usage": {"input": 3500, "output": 2000},
+                    },
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-002", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-003", "coverage_status": "partial"},
+                                {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
+                                {"requirement_id": "REQ-005", "coverage_status": "covered"},
+                            ]
+                        },
+                        "latency_ms": 1800,
+                        "token_usage": {"input": 1500, "output": 900},
+                    },
+                ]
+            }
+        )
         assert result["traceability_score"] == 0.8  # 4 of 5 (3 covered + 1 partial)
+        assert result["strict_coverage_score"] == 0.6  # 3 of 5 fully covered
         assert result["critique_accept_rate"] == 0.6  # 3 of 5
+        assert result["critique_mean_score"] > 0.0
+        assert result["quality_score"] > 0.0
+        assert result["total_requirements"] == 5
         assert result["latency_total_ms"] == 25300
         assert result["tokens_total"] == 30200
+
+    def test_metrics_ranking_marks_winner(self):
+        ranked = rank_metrics(
+            [
+                {
+                    "run_id": "slow",
+                    "quality_score": 0.8,
+                    "traceability_score": 0.9,
+                    "latency_total_ms": 300,
+                    "tokens_total": 10,
+                },
+                {
+                    "run_id": "best",
+                    "quality_score": 0.9,
+                    "traceability_score": 0.9,
+                    "latency_total_ms": 500,
+                    "tokens_total": 20,
+                },
+                {
+                    "run_id": "cheap",
+                    "quality_score": 0.8,
+                    "traceability_score": 0.9,
+                    "latency_total_ms": 200,
+                    "tokens_total": 10,
+                },
+            ]
+        )
+
+        assert ranked[0]["run_id"] == "best"
+        assert ranked[0]["rank"] == 1
+        assert ranked[0]["is_winner"] is True
+        assert ranked[1]["run_id"] == "cheap"
 
 
 class TestStatisticalAnalysis:
@@ -121,10 +241,34 @@ class TestStatisticalAnalysis:
 
     def test_two_strategy_comparison(self):
         data = [
-            {"prompt_strategy": "zero_shot", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.4, "critique_accept_rate": 0.6},
-            {"prompt_strategy": "zero_shot", "context_mode": "full", "traceability_score": 0.55, "test_pass_rate": 0.45, "critique_accept_rate": 0.65},
-            {"prompt_strategy": "chain_of_thought", "context_mode": "full", "traceability_score": 0.8, "test_pass_rate": 0.7, "critique_accept_rate": 0.85},
-            {"prompt_strategy": "chain_of_thought", "context_mode": "full", "traceability_score": 0.85, "test_pass_rate": 0.75, "critique_accept_rate": 0.9},
+            {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.4,
+                "critique_accept_rate": 0.6,
+            },
+            {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "traceability_score": 0.55,
+                "test_pass_rate": 0.45,
+                "critique_accept_rate": 0.65,
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "traceability_score": 0.8,
+                "test_pass_rate": 0.7,
+                "critique_accept_rate": 0.85,
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "traceability_score": 0.85,
+                "test_pass_rate": 0.75,
+                "critique_accept_rate": 0.9,
+            },
         ]
         result = run_statistical_analysis(data)
         assert "anova" in result
@@ -146,12 +290,15 @@ class TestStatisticalAnalysis:
             for context in contexts:
                 context_bonus = {"minimal": 0.0, "local": 0.05, "module": 0.10, "full": 0.15}[context]
                 score = base_scores[strategy] + context_bonus + np.random.normal(0, 0.02)
-                data.append({
-                    "prompt_strategy": strategy, "context_mode": context,
-                    "traceability_score": min(max(score, 0), 1),
-                    "test_pass_rate": min(max(score * 0.9, 0), 1),
-                    "critique_accept_rate": min(max(score * 0.85, 0), 1),
-                })
+                data.append(
+                    {
+                        "prompt_strategy": strategy,
+                        "context_mode": context,
+                        "traceability_score": min(max(score, 0), 1),
+                        "test_pass_rate": min(max(score * 0.9, 0), 1),
+                        "critique_accept_rate": min(max(score * 0.85, 0), 1),
+                    }
+                )
 
         result = run_statistical_analysis(data)
 
@@ -170,8 +317,20 @@ class TestStatisticalAnalysis:
 
     def test_markdown_report_generation(self):
         data = [
-            {"prompt_strategy": "zero_shot", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.4, "critique_accept_rate": 0.3},
-            {"prompt_strategy": "chain_of_thought", "context_mode": "full", "traceability_score": 0.9, "test_pass_rate": 0.8, "critique_accept_rate": 0.85},
+            {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.4,
+                "critique_accept_rate": 0.3,
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "traceability_score": 0.9,
+                "test_pass_rate": 0.8,
+                "critique_accept_rate": 0.85,
+            },
         ]
         stats = run_statistical_analysis(data)
         md = generate_markdown_report(stats)
@@ -180,10 +339,34 @@ class TestStatisticalAnalysis:
 
     def test_identical_groups_not_significant(self):
         data = [
-            {"prompt_strategy": "a", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.5, "critique_accept_rate": 0.5},
-            {"prompt_strategy": "a", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.5, "critique_accept_rate": 0.5},
-            {"prompt_strategy": "b", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.5, "critique_accept_rate": 0.5},
-            {"prompt_strategy": "b", "context_mode": "full", "traceability_score": 0.5, "test_pass_rate": 0.5, "critique_accept_rate": 0.5},
+            {
+                "prompt_strategy": "a",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.5,
+                "critique_accept_rate": 0.5,
+            },
+            {
+                "prompt_strategy": "a",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.5,
+                "critique_accept_rate": 0.5,
+            },
+            {
+                "prompt_strategy": "b",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.5,
+                "critique_accept_rate": 0.5,
+            },
+            {
+                "prompt_strategy": "b",
+                "context_mode": "full",
+                "traceability_score": 0.5,
+                "test_pass_rate": 0.5,
+                "critique_accept_rate": 0.5,
+            },
         ]
         result = run_statistical_analysis(data)
         # Identical values -> no significant difference

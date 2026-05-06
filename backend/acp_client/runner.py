@@ -36,6 +36,14 @@ from .registry import ACP_AGENTS
 
 logger = logging.getLogger(__name__)
 
+CODEX_MODEL_ALIASES = {
+    "gpt-5.5": "gpt-5.5/low",
+    "gpt-5.4": "gpt-5.4/low",
+    "gpt-5.4-mini": "gpt-5.4-mini/low",
+    "gpt-5.3-codex": "gpt-5.3-codex/low",
+    "gpt-5.2": "gpt-5.2/low",
+}
+
 
 class ACPError(Exception):
     """Base exception for all ACP-related errors."""
@@ -344,6 +352,14 @@ async def run_acp_prompt(
         )
 
     start = time.monotonic()
+    if agent_id == "codex":
+        selected_model = CODEX_MODEL_ALIASES.get(model_id, model_id) or spec.model or "gpt-5.5/low"
+        model_id = selected_model
+        system_text = (
+            f"Use model {selected_model} for this ReqLens stage. "
+            "Keep the final answer concise and machine-readable.\n\n"
+            f"{system_text}"
+        )
 
     try:
         # The ACP SDK provides spawn_agent_process which starts the agent CLI,
@@ -373,8 +389,7 @@ async def run_acp_prompt(
                 available_model_ids = [model.model_id for model in available_models or []]
                 if available_model_ids and model_id not in available_model_ids:
                     raise ACPError(
-                        f"Model '{model_id}' is not available for {agent_id}. "
-                        f"Available models: {available_model_ids}"
+                        f"Model '{model_id}' is not available for {agent_id}. Available models: {available_model_ids}"
                     )
                 if session.models is None:
                     raise ACPError(f"Agent {agent_id} does not expose ACP model selection")

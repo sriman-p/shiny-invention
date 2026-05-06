@@ -1,90 +1,111 @@
-/**
- * Sweep page — Cursor-agent-panel-inspired detailed evaluation view.
- *
- * Shows a rich real-time dashboard during sweep execution with:
- *   - Summary stats (agent, project, elapsed, ETA)
- *   - Active run panel with stage-by-stage pipeline progress
- *   - Compact run history with mini stage dots and elapsed times
- *   - Results table and statistical analysis after completion
- */
 'use client';
 
-import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
-import { api } from '@/lib/api';
-import { useEventStream } from '@/lib/sse';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BarChart3, Clock, ExternalLink, Play, Plus, Square, Trophy } from 'lucide-react';
+
+import { BackButton } from '@/components/back-button';
+import { PageWrapper } from '@/components/motion';
+import { StatusBadge } from '@/components/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusBadge, StageStatusIcon } from '@/components/status-badge';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
-import { BarChart3, Bot, Clock, Play, StopCircle, Timer, Zap } from 'lucide-react';
-import { Spinner } from '@/components/ui/spinner';
+import { api } from '@/lib/api';
+import { useEventStream } from '@/lib/sse';
 import { cn } from '@/lib/utils';
-import type { StageName, Run } from '@/lib/types';
+import type { AgentSpec, Run, StageName, StreamEvent, Sweep, SweepMetric } from '@/lib/types';
 
 const STRATEGIES = ['zero_shot', 'chain_of_thought', 'few_shot_static', 'few_shot_dynamic'];
 const CONTEXT_MODES = ['minimal', 'local', 'module', 'full'];
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
+const AGENT_DEFAULT_MODEL = 'agent-default';
 
 function generateMatrix(agentId: string, modelId: string) {
-  const matrix: Record<string, string>[] = [];
-  for (const strategy of STRATEGIES) {
-    for (const mode of CONTEXT_MODES) {
-      matrix.push({ prompt_strategy: strategy, context_mode: mode, agent_id: agentId, model_id: modelId });
-    }
-  }
-  return matrix;
+  return STRATEGIES.flatMap((prompt_strategy) =>
+    CONTEXT_MODES.map((context_mode) => ({ prompt_strategy, context_mode, agent_id: agentId, model_id: modelId })),
+  );
 }
 
-/** Format milliseconds to human-readable elapsed time */
-function formatElapsed(ms: number): string {
-  const secs = Math.floor(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const remSecs = secs % 60;
-  if (mins < 60) return `${mins}m ${remSecs}s`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+function modelValueForMatrix(modelId: string) {
+  return modelId === AGENT_DEFAULT_MODEL ? '' : modelId;
 }
 
-/** Hook that returns a live elapsed counter in ms, updating every second */
-function useElapsed(startedAt: string | null, isActive: boolean): number {
+function formatElapsed(ms: number) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function formatInteger(value: unknown) {
+  return metricNumber(value).toLocaleString();
+}
+
+function formatBytes(value: unknown) {
+  const bytes = metricNumber(value);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function useElapsed(startedAt: string | null, isActive: boolean) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (!startedAt || !isActive) {
-      if (startedAt && !isActive) {
-        setElapsed(Date.now() - new Date(startedAt).getTime());
-      }
-      return;
-    }
+    if (!startedAt) return;
     const start = new Date(startedAt).getTime();
-    setElapsed(Date.now() - start);
-    const interval = setInterval(() => setElapsed(Date.now() - start), 1000);
-    return () => clearInterval(interval);
+    const updateElapsed = () => setElapsed(Date.now() - start);
+    updateElapsed();
+    if (!isActive) return;
+    const timer = setInterval(updateElapsed, 1000);
+    return () => clearInterval(timer);
   }, [startedAt, isActive]);
   return elapsed;
 }
 
-  /** Mini stage pipeline dots for compact run rows */
-function MiniStageDots({ run }: { run: Run }) {
+function metricNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function metricPercent(value: unknown) {
+  return `${(metricNumber(value) * 100).toFixed(1)}%`;
+}
+
+function label(value: string) {
+  return value.replace(/_/g, ' ');
+}
+
+function isActiveStatus(status: string) {
+  return status === 'running' || status === 'pending';
+}
+
+function rankedMetrics(sweep?: Sweep | null) {
+  return [...(sweep?.metrics_summary ?? [])].sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999));
+}
+
+function StageDots({ run }: { run: Run }) {
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-1">
       {STAGES.map((stage) => {
-        const se = run.stages?.find((s) => s.stage === stage);
-        const status = se?.status || 'pending';
+        const status = run.stages?.find((s) => s.stage === stage)?.status ?? 'pending';
         return (
-          <div
+          <span
             key={stage}
             title={`${stage}: ${status}`}
             className={cn(
-              'size-2 rounded-full transition-colors',
+              'size-2 rounded-full',
               status === 'succeeded' && 'bg-success',
-              status === 'running' && 'bg-info animate-pulse',
+              status === 'running' && 'bg-info',
               status === 'failed' && 'bg-destructive',
               status === 'cancelled' && 'bg-warning',
-              status === 'pending' && 'bg-muted-foreground/20',
+              status === 'pending' && 'bg-muted-foreground/25',
             )}
           />
         );
@@ -93,436 +114,618 @@ function MiniStageDots({ run }: { run: Run }) {
   );
 }
 
+function EventLine({ event }: { event: StreamEvent }) {
+  const nested = event.event && typeof event.event === 'object' && !Array.isArray(event.event) ? (event.event as StreamEvent) : null;
+  const shown = nested ?? event;
+  const payload = shown.payload && typeof shown.payload === 'object' ? JSON.stringify(shown.payload) : shown.payload;
+  return (
+    <div className="grid grid-cols-[140px_90px_1fr] gap-3 border-b py-2 text-xs last:border-0">
+      <span className="font-medium">{shown.type}</span>
+      <span className="capitalize text-muted-foreground">{shown.stage ?? ''}</span>
+      <span className="truncate text-muted-foreground">{payload ? String(payload) : String(event.run_id ?? '')}</span>
+    </div>
+  );
+}
+
+function SweepHistory({
+  sweeps,
+  activeSweepId,
+  onSelect,
+}: {
+  sweeps: Sweep[];
+  activeSweepId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  if (sweeps.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Saved Sweeps</CardTitle>
+        <CardDescription>Reopen a running or completed sweep. Metrics are stored after every completed run.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ScrollArea className="max-h-[220px]">
+          <div className="grid gap-2 pr-3 md:grid-cols-2 lg:grid-cols-3">
+            {sweeps.map((item) => {
+              const metricsCount = item.metrics_summary?.length ?? 0;
+              const selected = item.id === activeSweepId;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item.id)}
+                  className={cn(
+                    'rounded-md border p-3 text-left transition-colors hover:bg-muted/40',
+                    selected && 'border-foreground/25 bg-muted/30',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs">{item.id.slice(0, 8)}</span>
+                    <StatusBadge status={item.status} />
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {metricsCount}/{item.matrix.length} metric rows · {new Date(item.created_at).toLocaleString()}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SweepPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const projectId = params.id as string;
-  const [sweepId, setSweepId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const requestedSweepId = searchParams.get('sweep');
+
+  const [selectedSweepId, setSelectedSweepId] = useState<string | null>(null);
+  const [showConfig, setShowConfig] = useState(false);
   const [enabled, setEnabled] = useState<boolean[]>(Array(16).fill(true));
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [customModelId, setCustomModelId] = useState('');
 
   const { data: project } = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: api.getAgents });
+  const { data: projectSweeps = [] } = useQuery({
+    queryKey: ['project-sweeps', projectId],
+    queryFn: () => api.getProjectSweeps(projectId),
+    refetchInterval: (query) => {
+      const sweeps = query.state.data ?? [];
+      return sweeps.some((item) => isActiveStatus(item.status)) ? 2500 : false;
+    },
+  });
 
-  // Use the agent configured on the project (from the first stage config), falling back to 'claude-code'
   const projectAgent = project?.agents?.[0];
-  const agentId = projectAgent?.agent_id || 'claude-code';
-  const modelId = projectAgent?.model_id || '';
-  const matrix = generateMatrix(agentId, modelId);
+  const agentId = selectedAgentId || projectAgent?.agent_id || 'codex';
+  const selectedAgent = agents.find((agent) => agent.id === agentId);
+  const modelOptions = Array.from(
+    new Set([AGENT_DEFAULT_MODEL, selectedAgent?.model, ...(selectedAgent?.model_options ?? [])].filter(Boolean)),
+  ) as string[];
+  const modelId = customModelId.trim() || selectedModelId || projectAgent?.model_id || selectedAgent?.model || AGENT_DEFAULT_MODEL;
+  const matrixModelId = modelValueForMatrix(modelId);
+  const matrix = useMemo(() => generateMatrix(agentId, matrixModelId), [agentId, matrixModelId]);
+
+  const selectSweep = useCallback(
+    (id: string) => {
+      setSelectedSweepId(id);
+      setShowConfig(false);
+      router.replace(`/projects/${projectId}/sweep?sweep=${id}`, { scroll: false });
+    },
+    [projectId, router],
+  );
+
+  const defaultSweep = projectSweeps.find((item) => isActiveStatus(item.status)) ?? projectSweeps[0];
+  const sweepId = showConfig ? null : requestedSweepId || selectedSweepId || defaultSweep?.id || null;
 
   const { data: sweep } = useQuery({
     queryKey: ['sweep', sweepId],
     queryFn: () => api.getSweep(sweepId!),
-    enabled: !!sweepId,
-    refetchInterval: (query) => { const s = query.state.data; return s && s.status === 'running' ? 3000 : false; },
+    enabled: !!sweepId && !showConfig,
+    refetchInterval: (query) => {
+      const s = query.state.data;
+      return s && isActiveStatus(s.status) ? 1500 : false;
+    },
   });
 
-  // Fetch active run details (with stages) for the pipeline visualization
-  const activeRunSummary = sweep?.runs?.find((r) => r.status === 'running');
+  const activeSweep = showConfig ? null : sweep;
+  const activeRun = activeSweep?.runs?.find((r) => r.status === 'running') ?? activeSweep?.runs?.find((r) => r.status === 'pending');
   const { data: activeRunDetail } = useQuery({
-    queryKey: ['run', activeRunSummary?.id],
-    queryFn: () => api.getRun(activeRunSummary!.id),
-    enabled: !!activeRunSummary?.id,
-    refetchInterval: activeRunSummary ? 2000 : false,
+    queryKey: ['run', activeRun?.id],
+    queryFn: () => api.getRun(activeRun!.id),
+    enabled: !!activeRun?.id,
+    refetchInterval: activeRun ? 1200 : false,
   });
 
-  const eventsUrl = sweepId && sweep?.status === 'running' ? api.getSweepEventsUrl(sweepId) : null;
-  useEventStream(eventsUrl);
-
-  const queryClient = useQueryClient();
+  const eventsUrl = activeSweep && isActiveStatus(activeSweep.status) ? api.getSweepEventsUrl(activeSweep.id) : null;
+  const { events } = useEventStream(eventsUrl);
 
   const startSweepMutation = useMutation({
-    mutationFn: () => { const sel = matrix.filter((_, i) => enabled[i]); return api.createSweep(projectId, sel); },
-    onSuccess: (data) => setSweepId(data.id),
+    mutationFn: () => api.createSweep(projectId, matrix.filter((_, index) => enabled[index])),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['project-sweeps', projectId] });
+      selectSweep(data.id);
+    },
   });
 
   const cancelSweepMutation = useMutation({
-    mutationFn: () => api.cancelSweep(sweepId!),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sweep', sweepId] }); },
+    mutationFn: () => api.cancelSweep(activeSweep!.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sweep', activeSweep?.id] });
+      queryClient.invalidateQueries({ queryKey: ['project-sweeps', projectId] });
+    },
   });
 
-  const enabledCount = enabled.filter(Boolean).length;
-  const finishedRuns = sweep?.runs?.filter((r) => ['succeeded', 'failed', 'cancelled'].includes(r.status)).length || 0;
-  const totalConfigs = sweep?.matrix?.length || enabledCount;
-  const progressPct = totalConfigs > 0 ? (finishedRuns / totalConfigs) * 100 : 0;
-
-  // Live elapsed timer for the whole sweep
-  const sweepElapsed = useElapsed(sweep?.created_at || null, sweep?.status === 'running');
-
-  // Compute ETA based on average run time
-  const completedRunTimes = (sweep?.runs || [])
-    .filter((r) => r.finished_at && r.started_at)
-    .map((r) => new Date(r.finished_at!).getTime() - new Date(r.started_at!).getTime());
-  const avgRunTime = completedRunTimes.length > 0 ? completedRunTimes.reduce((a, b) => a + b, 0) / completedRunTimes.length : 0;
-  const remainingConfigs = totalConfigs - finishedRuns - (activeRunSummary ? 1 : 0);
-  const eta = avgRunTime > 0 && remainingConfigs > 0 ? formatElapsed(avgRunTime * remainingConfigs) : null;
+  const selectedCount = enabled.filter(Boolean).length;
+  const totalConfigs = activeSweep?.matrix.length || selectedCount;
+  const finishedRuns = activeSweep?.runs?.filter((r) => ['succeeded', 'failed', 'cancelled'].includes(r.status)).length ?? 0;
+  const progress = totalConfigs ? Math.round((finishedRuns / totalConfigs) * 100) : 0;
+  const elapsed = useElapsed(activeSweep?.created_at ?? null, activeSweep?.status === 'running');
+  const metrics = rankedMetrics(activeSweep);
+  const bestMetric = metrics.find((row) => row.is_winner) ?? metrics[0];
+  const averageAccept =
+    metrics.length > 0 ? metrics.reduce((sum, row) => sum + metricNumber(row.critique_accept_rate), 0) / metrics.length : 0;
+  const completedDurations = (activeSweep?.runs ?? [])
+    .filter((run) => run.started_at && run.finished_at)
+    .map((run) => new Date(run.finished_at!).getTime() - new Date(run.started_at!).getTime());
+  const averageDuration = completedDurations.length
+    ? completedDurations.reduce((sum, value) => sum + value, 0) / completedDurations.length
+    : 0;
+  const remaining = Math.max(totalConfigs - finishedRuns - (activeRun ? 1 : 0), 0);
+  const eta = averageDuration && remaining ? formatElapsed(averageDuration * remaining) : 'pending';
+  const selectedModelLabel = matrixModelId || 'agent default';
 
   return (
-    <PageWrapper className="p-8 max-w-7xl mx-auto space-y-6">
-      <FadeIn>
-        <div className="flex items-center justify-between">
+    <PageWrapper className="mx-auto flex max-w-7xl flex-col gap-6 p-8">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-3">
+          <BackButton fallbackHref={`/projects/${projectId}`} />
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2"><BarChart3 className="size-5" />Evaluation Sweep</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {project?.name ? `${project.name} · ` : ''}Compare strategies and context modes across {enabledCount} configurations.
+            <h1 className="text-2xl font-semibold tracking-tight">Sweep Evaluation</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {project?.name ?? 'Project'} · compare provider, model, prompt strategy, and context mode.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {!sweepId && (
-              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
-                <Button onClick={() => startSweepMutation.mutate()} disabled={startSweepMutation.isPending || enabledCount === 0}>
-                  {startSweepMutation.isPending ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />}
-                  Start sweep ({enabledCount} configs)
-                </Button>
-              </motion.div>
-            )}
-            {sweep && sweep.status === 'running' && (
-              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
-                <Button
-                  variant="destructive"
-                  onClick={() => cancelSweepMutation.mutate()}
-                  disabled={cancelSweepMutation.isPending}
-                >
-                  {cancelSweepMutation.isPending ? <Spinner data-icon="inline-start" /> : <StopCircle data-icon="inline-start" />}
-                  Stop sweep
-                </Button>
-              </motion.div>
-            )}
-          </div>
         </div>
-      </FadeIn>
+        <div className="flex flex-wrap justify-end gap-2">
+          {activeSweep && isActiveStatus(activeSweep.status) && (
+            <Button variant="destructive" onClick={() => cancelSweepMutation.mutate()} disabled={cancelSweepMutation.isPending}>
+              {cancelSweepMutation.isPending ? <Spinner data-icon="inline-start" /> : <Square data-icon="inline-start" />}
+              Stop
+            </Button>
+          )}
+          {activeSweep && !isActiveStatus(activeSweep.status) && (
+            <Button variant="outline" onClick={() => setShowConfig(true)}>
+              <Plus data-icon="inline-start" />
+              New sweep
+            </Button>
+          )}
+          {!activeSweep && (
+            <Button onClick={() => startSweepMutation.mutate()} disabled={startSweepMutation.isPending || selectedCount === 0}>
+              {startSweepMutation.isPending ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />}
+              Start {selectedCount} configs
+            </Button>
+          )}
+        </div>
+      </div>
 
-      {/* Matrix config — only before sweep starts */}
-      {!sweepId && (
-        <FadeIn>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Configuration Matrix</CardTitle>
-              <CardDescription>
-                Agent: <span className="font-mono text-foreground/80">{agentId}</span>
-                {modelId && <> · Model: <span className="font-mono text-foreground/80">{modelId}</span></>}
-                {' · '}Toggle cells to include/exclude.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-lg border overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[180px]">Strategy \ Context</TableHead>
-                      {CONTEXT_MODES.map((m) => (<TableHead key={m} className="text-center capitalize text-xs w-[100px]">{m}</TableHead>))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {STRATEGIES.map((strategy, si) => (
-                      <TableRow key={strategy}>
-                        <TableCell className="font-medium text-sm">{strategy.replace(/_/g, ' ')}</TableCell>
-                        {CONTEXT_MODES.map((_, ci) => {
-                          const idx = si * 4 + ci;
-                          return (
-                            <TableCell key={ci} className="text-center">
-                              <motion.div whileTap={{ scale: 0.9 }} className="inline-flex">
-                                <Switch checked={enabled[idx]} onCheckedChange={() => { const next = [...enabled]; next[idx] = !next[idx]; setEnabled(next); }} />
-                              </motion.div>
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        </FadeIn>
+      <SweepHistory sweeps={projectSweeps} activeSweepId={activeSweep?.id ?? sweepId} onSelect={selectSweep} />
+
+      {!activeSweep && sweepId && (
+        <Card>
+          <CardContent className="flex h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Spinner data-icon="inline-start" />
+            Loading saved sweep
+          </CardContent>
+        </Card>
       )}
 
-      {/* ═══ SWEEP IN PROGRESS ═══ */}
-      {sweep && (
-        <div className="flex flex-col gap-5">
-
-          {/* Summary stats row */}
-          <FadeIn>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="size-9 rounded-lg bg-info/10 flex items-center justify-center">
-                    <Bot className="size-4 text-info" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Agent</p>
-                    <p className="text-sm font-medium font-mono truncate max-w-[120px]">{sweep.matrix[0]?.agent_id || agentId}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="size-9 rounded-lg bg-success/10 flex items-center justify-center">
-                    <Zap className="size-4 text-success" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Progress</p>
-                    <p className="text-sm font-medium tabular-nums">{finishedRuns} / {totalConfigs} configs</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="size-9 rounded-lg bg-secondary flex items-center justify-center">
-                    <Clock className="size-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Elapsed</p>
-                    <p className="text-sm font-medium tabular-nums">{formatElapsed(sweepElapsed)}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="size-9 rounded-lg bg-warning/10 flex items-center justify-center">
-                    <Timer className="size-4 text-warning" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-muted-foreground uppercase tracking-wider">ETA</p>
-                    <p className="text-sm font-medium tabular-nums">{eta || (sweep.status === 'running' ? 'Calculating…' : '—')}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </FadeIn>
-
-          {/* Progress bar */}
-          <FadeIn>
-            <div className="relative">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={sweep.status} />
-                  {sweep.status === 'running' && (
-                    <span className="text-xs text-muted-foreground animate-pulse">Processing…</span>
-                  )}
-                </div>
-                <span className="text-xs font-mono text-muted-foreground tabular-nums">{Math.round(progressPct)}%</span>
+      {!activeSweep && !sweepId && (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle className="text-base">Configuration Matrix</CardTitle>
+                <CardDescription>
+                  Choose the provider and model up front, then run any subset of the strategy/context grid.
+                </CardDescription>
               </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full rounded-full bg-gradient-to-r from-info via-success to-success"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${progressPct}%` }}
-                  transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Select
+                  value={agentId}
+                  onValueChange={(value) => {
+                    const nextAgent = agents.find((agent) => agent.id === value);
+                    setSelectedAgentId(value);
+                    setSelectedModelId(nextAgent?.model || AGENT_DEFAULT_MODEL);
+                    setCustomModelId('');
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-[220px] text-xs">
+                    <SelectValue placeholder="Provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {agents.map((agent: AgentSpec) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.display_name}{agent.available ? '' : ' (not configured)'}
+                        </SelectItem>
+                      ))}
+                      {agents.length === 0 && <SelectItem value="codex">OpenAI Codex CLI</SelectItem>}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Select value={selectedModelId || projectAgent?.model_id || selectedAgent?.model || AGENT_DEFAULT_MODEL} onValueChange={setSelectedModelId}>
+                  <SelectTrigger className="h-9 w-[220px] text-xs">
+                    <SelectValue placeholder="Model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {modelOptions.map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model === AGENT_DEFAULT_MODEL ? 'Agent default' : model}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={customModelId}
+                  onChange={(event) => setCustomModelId(event.target.value)}
+                  placeholder="custom model id"
+                  className="h-9 w-[220px] text-xs font-mono"
                 />
               </div>
             </div>
-          </FadeIn>
-
-          {/* ═══ ACTIVE RUN — Stage Pipeline ═══ */}
-          {activeRunDetail && (
-            <FadeIn>
-              <Card className="border-info/20 bg-info/[0.02]">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex size-2.5">
-                        <span className="animate-ping absolute inline-flex size-full rounded-full bg-info opacity-75" />
-                        <span className="relative inline-flex rounded-full size-2.5 bg-info" />
-                      </span>
-                      <CardTitle className="text-sm">
-                        Running config {(sweep.runs?.length || 0)} of {totalConfigs}
-                      </CardTitle>
-                    </div>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {String((activeRunDetail.config_snapshot as Record<string, unknown>)?.prompt_strategy || '').replace(/_/g, ' ')}
-                      {' · '}
-                      {String((activeRunDetail.config_snapshot as Record<string, unknown>)?.context_mode || '')}
-                    </span>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {/* Stage pipeline visualization */}
-                  <div className="relative">
-                    {/* Connecting line */}
-                    <div className="absolute top-1/2 left-4 right-4 h-px bg-border -translate-y-1/2 z-0" />
-                    {/* Progress overlay */}
-                    {(() => {
-                      const completed = STAGES.filter((s) => {
-                        const se = activeRunDetail.stages?.find((st) => st.stage === s);
-                        return se?.status === 'succeeded';
-                      }).length;
-                      const pct = (completed / STAGES.length) * 100;
-                      return (
-                        <motion.div
-                          className="absolute top-1/2 left-4 h-px bg-emerald-500/50 -translate-y-1/2 z-0"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${pct}%` }}
-                          transition={{ duration: 0.6 }}
-                        />
-                      );
-                    })()}
-
-                    <div className="flex items-center justify-between relative z-10">
-                      {STAGES.map((stage, i) => {
-                        const se = activeRunDetail.stages?.find((s) => s.stage === stage);
-                        const status = (se?.status as 'pending' | 'running' | 'succeeded' | 'failed') || 'pending';
-                        const latency = se?.latency_ms ? `${(se.latency_ms / 1000).toFixed(1)}s` : null;
-
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Provider</p>
+                <p className="mt-1 truncate text-sm font-medium">{selectedAgent?.display_name || agentId}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Model</p>
+                <p className="mt-1 truncate text-sm font-medium">{selectedModelLabel}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Selected configs</p>
+                <p className="mt-1 text-sm font-medium">{selectedCount}/16</p>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Prompt strategy</TableHead>
+                    {CONTEXT_MODES.map((mode) => (
+                      <TableHead key={mode} className="text-center capitalize">{mode}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {STRATEGIES.map((strategy, strategyIndex) => (
+                    <TableRow key={strategy}>
+                      <TableCell className="font-medium">{label(strategy)}</TableCell>
+                      {CONTEXT_MODES.map((mode, contextIndex) => {
+                        const index = strategyIndex * CONTEXT_MODES.length + contextIndex;
                         return (
-                          <motion.div
-                            key={stage}
-                            initial={{ opacity: 0, y: 8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.06, ...springSmooth }}
-                            className={cn(
-                              'flex flex-col items-center px-2.5 py-2.5 rounded-xl border bg-card min-w-[80px] transition-colors',
-                              status === 'running' && 'border-info/30 shadow-sm shadow-info/10',
-                              status === 'succeeded' && 'border-success/20',
-                              status === 'failed' && 'border-destructive/20',
-                              status === 'pending' && 'border-transparent',
-                            )}
-                          >
-                            <span className="text-[10px] font-medium capitalize mb-1 text-muted-foreground">{stage}</span>
-                            <StageStatusIcon status={status} />
-                            {latency && <span className="text-[10px] text-muted-foreground/60 mt-1 tabular-nums">{latency}</span>}
-                            {status === 'running' && <span className="text-[10px] text-info mt-0.5 font-medium">Active</span>}
-                          </motion.div>
+                          <TableCell key={mode} className="text-center">
+                            <Switch
+                              checked={enabled[index]}
+                              onCheckedChange={(checked) => {
+                                const next = [...enabled];
+                                next[index] = checked;
+                                setEnabled(next);
+                              }}
+                            />
+                          </TableCell>
                         );
                       })}
-                    </div>
-                  </div>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {activeSweep && (
+        <>
+          <div className="grid gap-3 md:grid-cols-5">
+            {[
+              ['Status', <StatusBadge key="status" status={activeSweep.status} />],
+              ['Progress', `${finishedRuns}/${totalConfigs}`],
+              ['Elapsed', formatElapsed(elapsed)],
+              ['ETA', activeSweep.status === 'running' ? eta : 'complete'],
+              ['Winner', bestMetric ? `${label(String(bestMetric.prompt_strategy))} / ${bestMetric.context_mode}` : 'pending'],
+            ].map(([title, value]) => (
+              <Card key={String(title)}>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">{title}</p>
+                  <div className="mt-2 truncate text-sm font-medium tabular-nums">{value}</div>
                 </CardContent>
               </Card>
-            </FadeIn>
+            ))}
+          </div>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Overall progress</span>
+                <span>{progress}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${progress}%` }} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {bestMetric && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base"><Trophy className="size-4" />Best Performer</CardTitle>
+                <CardDescription>Ranked by quality score first, then lower latency and token cost.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-5">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Configuration</p>
+                  <p className="mt-1 truncate text-sm font-medium">{label(String(bestMetric.prompt_strategy))} / {bestMetric.context_mode}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Quality</p>
+                  <p className="mt-1 text-sm font-medium">{metricPercent(bestMetric.quality_score)}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Traceability</p>
+                  <p className="mt-1 text-sm font-medium">{metricPercent(bestMetric.traceability_score)}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Accept rate</p>
+                  <p className="mt-1 text-sm font-medium">{metricPercent(bestMetric.critique_accept_rate)}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Latency</p>
+                  <p className="mt-1 text-sm font-medium">{formatElapsed(metricNumber(bestMetric.latency_total_ms))}</p>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
-          {/* ═══ RUN HISTORY ═══ */}
-          {sweep.runs && sweep.runs.length > 0 && (
-            <FadeIn>
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">Run History</CardTitle>
-                    <CardDescription className="text-xs mt-0">
-                      {finishedRuns} completed · {sweep.runs.length - finishedRuns} in progress
-                    </CardDescription>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1">
-                    {sweep.runs.map((run, i) => {
-                      const snap = (run.config_snapshot || {}) as Record<string, unknown>;
-                      const strategy = String(snap.prompt_strategy || sweep.matrix[i]?.prompt_strategy || '—').replace(/_/g, ' ');
-                      const context = String(snap.context_mode || sweep.matrix[i]?.context_mode || '—');
-                      const isRunning = run.status === 'running';
-                      const elapsed = run.started_at && run.finished_at
-                        ? new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()
-                        : run.started_at
-                          ? Date.now() - new Date(run.started_at).getTime()
-                          : 0;
-
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Run Queue</CardTitle>
+                <CardDescription>{activeSweep.runs?.length ?? 0} runs created. Reopening this page reads the same stored sweep.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[420px]">
+                  <div className="space-y-2 pr-3">
+                    {(activeSweep.runs ?? []).map((run, index) => {
+                      const snap = (run.config_snapshot ?? {}) as Record<string, unknown>;
+                      const strategy = String(snap.prompt_strategy || activeSweep.matrix[index]?.prompt_strategy || '');
+                      const context = String(snap.context_mode || activeSweep.matrix[index]?.context_mode || '');
                       return (
-                        <motion.div
-                          key={run.id}
-                          initial={{ opacity: 0, x: -8 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.03, ...springSmooth }}
-                          className={cn(
-                            'flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors',
-                            isRunning && 'border-info/20 bg-info/[0.02]',
-                            !isRunning && 'border-transparent hover:bg-muted/30',
-                          )}
-                        >
-                          {/* Index */}
-                          <span className="text-xs font-mono text-muted-foreground/50 w-5 text-right shrink-0">{i + 1}</span>
-
-                          {/* Status indicator */}
-                          <div className="shrink-0">
-                            {isRunning ? (
-                              <span className="relative flex size-2">
-                                <span className="animate-ping absolute inline-flex size-full rounded-full bg-info opacity-75" />
-                                <span className="relative inline-flex rounded-full size-2 bg-info" />
-                              </span>
-                            ) : (
-                              <div className={cn(
-                                'size-2 rounded-full',
-                                run.status === 'succeeded' && 'bg-success',
-                                run.status === 'failed' && 'bg-destructive',
-                                run.status === 'cancelled' && 'bg-warning',
-                                run.status === 'pending' && 'bg-muted-foreground/30',
-                              )} />
-                            )}
-                          </div>
-
-                          {/* Config info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium truncate">{strategy}</span>
-                              <span className="text-xs text-muted-foreground capitalize">· {context}</span>
+                        <div key={run.id} className="grid grid-cols-[36px_1fr_auto_auto] items-center gap-3 rounded-md border p-3">
+                          <span className="text-right text-xs text-muted-foreground">{index + 1}</span>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{label(strategy)} · {context}</div>
+                            <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+                              <StageDots run={run} />
+                              <span>{run.id.slice(0, 8)}</span>
                             </div>
                           </div>
-
-                          {/* Stage dots */}
-                          {run.stages && run.stages.length > 0 && (
-                            <MiniStageDots run={run} />
-                          )}
-
-                          {/* Elapsed time */}
-                          <span className="text-xs font-mono text-muted-foreground/60 tabular-nums w-14 text-right shrink-0">
-                            {elapsed > 0 ? formatElapsed(elapsed) : '—'}
-                          </span>
-
-                          {/* Status badge */}
-                          <div className="shrink-0">
-                            <StatusBadge status={run.status} className="text-[10px]" />
-                          </div>
-                        </motion.div>
+                          <StatusBadge status={run.status} />
+                          <Link href={`/projects/${projectId}/runs/${run.id}`}>
+                            <Button variant="ghost" size="icon" className="size-8" aria-label={`Open run ${run.id.slice(0, 8)}`}>
+                              <ExternalLink className="size-4" />
+                            </Button>
+                          </Link>
+                        </div>
                       );
                     })}
                   </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Live Run Detail</CardTitle>
+                <CardDescription>{activeRunDetail ? `Run ${activeRunDetail.id.slice(0, 8)}` : 'Waiting for the next run.'}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {activeRunDetail ? (
+                  <div className="space-y-3">
+                    {STAGES.map((stage) => {
+                      const stageExecution = activeRunDetail.stages?.find((item) => item.stage === stage);
+                      const updates = stageExecution?.raw_updates?.length ?? 0;
+                      return (
+                        <div key={stage} className="rounded-md border p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium capitalize">{stage}</span>
+                            <StatusBadge status={stageExecution?.status ?? 'pending'} />
+                          </div>
+                          <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                            <span className="truncate">{stageExecution?.agent_id || agentId}</span>
+                            <span className="truncate">{stageExecution?.model_id || selectedModelLabel}</span>
+                            <span className="text-right">{updates} updates</span>
+                          </div>
+                          {stageExecution?.error && <p className="mt-2 text-xs text-destructive">{stageExecution.error}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">No active run yet.</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Event Log</CardTitle>
+              <CardDescription>Nested run events are forwarded through the sweep stream when the page is open.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[260px]">
+                {events.length ? (
+                  <div className="pr-3">{events.slice(-80).map((event, index) => <EventLine key={index} event={event} />)}</div>
+                ) : (
+                  <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+                    {isActiveStatus(activeSweep.status) ? 'Waiting for streamed events.' : 'Stream closed. Stored outputs and metrics are shown below.'}
+                  </div>
+                )}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          {metrics.length > 0 && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base"><BarChart3 className="size-4" />Quality by Configuration</CardTitle>
+                  <CardDescription>Quality combines traceability, critique accept rate, and critique score.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {metrics.map((row) => {
+                    const score = metricNumber(row.quality_score);
+                    return (
+                      <div key={row.run_id ?? `${row.prompt_strategy}-${row.context_mode}`}>
+                        <div className="mb-1 flex justify-between gap-3 text-xs">
+                          <span className="truncate">#{row.rank ?? '-'} {label(String(row.prompt_strategy))} · {String(row.context_mode)}</span>
+                          <span className="tabular-nums">{metricPercent(score)}</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-chart-2" style={{ width: `${Math.min(score * 100, 100)}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
-            </FadeIn>
-          )}
 
-          {/* ═══ RESULTS TABLE ═══ */}
-          {sweep.metrics_summary && (
-            <FadeIn>
               <Card>
-                <CardHeader className="pb-3"><CardTitle className="text-base">Results</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="rounded-lg border overflow-hidden">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base"><Clock className="size-4" />Result Summary</CardTitle>
+                  <CardDescription>Rollup for completed sweep runs.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Metric rows</p>
+                      <p className="mt-1 text-lg font-semibold">{metrics.length}</p>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Avg accept</p>
+                      <p className="mt-1 text-lg font-semibold">{metricPercent(averageAccept)}</p>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Avg time</p>
+                      <p className="mt-1 text-lg font-semibold">{averageDuration ? formatElapsed(averageDuration) : 'n/a'}</p>
+                    </div>
+                  </div>
+                  <div className="overflow-hidden rounded-md border">
                     <Table>
                       <TableHeader>
-                        <TableRow><TableHead>Strategy</TableHead><TableHead>Context</TableHead><TableHead className="text-right">Traceability</TableHead><TableHead className="text-right">Accept Rate</TableHead><TableHead className="text-right">Latency</TableHead></TableRow>
+                        <TableRow>
+                          <TableHead>Rank</TableHead>
+                          <TableHead>Configuration</TableHead>
+                          <TableHead className="text-right">Quality</TableHead>
+                          <TableHead className="text-right">Trace</TableHead>
+                          <TableHead className="text-right">Accept</TableHead>
+                        </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(sweep.metrics_summary as Record<string, unknown>[]).map((m, i) => (
-                          <motion.tr key={i} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...springSmooth }} className="border-b border-border last:border-0">
-                            <TableCell className="text-sm">{String(m.prompt_strategy || '').replace(/_/g, ' ')}</TableCell>
-                            <TableCell className="text-sm capitalize">{String(m.context_mode || '')}</TableCell>
-                            <TableCell className="text-right font-mono text-sm">{((m.traceability_score as number) * 100).toFixed(1)}%</TableCell>
-                            <TableCell className="text-right font-mono text-sm">{((m.critique_accept_rate as number) * 100).toFixed(1)}%</TableCell>
-                            <TableCell className="text-right font-mono text-sm tabular-nums">{String(m.latency_total_ms || 0)}ms</TableCell>
-                          </motion.tr>
+                        {metrics.map((row) => (
+                          <TableRow key={row.run_id ?? `${row.prompt_strategy}-${row.context_mode}`}>
+                            <TableCell className="font-mono text-xs">#{row.rank ?? '-'}</TableCell>
+                            <TableCell>{label(String(row.prompt_strategy))} · {String(row.context_mode)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{metricPercent(row.quality_score)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{metricPercent(row.traceability_score)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{metricPercent(row.critique_accept_rate)}</TableCell>
+                          </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </div>
                 </CardContent>
               </Card>
-            </FadeIn>
+            </div>
           )}
 
-          {/* ═══ STATISTICAL ANALYSIS ═══ */}
-          {sweep.stats_report && (
-            <FadeIn>
-              <Card>
-                <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="h-4 w-4" />Statistical Analysis</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="bg-muted/20 rounded-lg p-4 border border-border/50">
-                    <pre className="font-mono text-xs whitespace-pre-wrap overflow-auto max-h-96">
-                      {(sweep.stats_report as Record<string, unknown>).markdown ? String((sweep.stats_report as Record<string, unknown>).markdown) : JSON.stringify(sweep.stats_report, null, 2)}
-                    </pre>
-                  </div>
-                </CardContent>
-              </Card>
-            </FadeIn>
+          {metrics.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Detailed Metrics</CardTitle>
+                <CardDescription>Stored output and cost indicators for each run.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-hidden rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Run</TableHead>
+                        <TableHead>Provider</TableHead>
+                        <TableHead>Model</TableHead>
+                        <TableHead className="text-right">Tests</TableHead>
+                        <TableHead className="text-right">Stages</TableHead>
+                        <TableHead className="text-right">Tokens</TableHead>
+                        <TableHead className="text-right">Outputs</TableHead>
+                        <TableHead className="text-right">Latency</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {metrics.map((row: SweepMetric) => (
+                        <TableRow key={row.run_id ?? `${row.prompt_strategy}-${row.context_mode}`}>
+                          <TableCell>
+                            {row.run_id ? (
+                              <Link href={`/projects/${projectId}/runs/${row.run_id}`} className="font-mono text-xs hover:underline">
+                                {row.run_id.slice(0, 8)}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground">n/a</span>
+                            )}
+                          </TableCell>
+                          <TableCell>{row.agent_id || 'agent'}</TableCell>
+                          <TableCell className="max-w-[180px] truncate font-mono text-xs">{row.model_id || 'agent default'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatInteger(row.generated_tests_count)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatInteger(row.completed_stages)}/6</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatInteger(row.tokens_total)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatBytes(row.output_bytes)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatElapsed(metricNumber(row.latency_total_ms))}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </div>
+
+          {activeSweep.stats_report && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Statistical Report</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="max-h-96 overflow-auto rounded-md border bg-muted/20 p-4 text-xs whitespace-pre-wrap">
+                  {(activeSweep.stats_report as Record<string, unknown>).markdown
+                    ? String((activeSweep.stats_report as Record<string, unknown>).markdown)
+                    : JSON.stringify(activeSweep.stats_report, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </PageWrapper>
   );

@@ -49,7 +49,7 @@ class TestAgentRegistry:
     def test_gemini_spec(self):
         spec = ACP_AGENTS["gemini"]
         assert spec.command == "gemini"
-        assert "--experimental-acp" in spec.args
+        assert "--acp" in spec.args
 
     def test_agents_without_env_requirements(self):
         no_env = [a for a in ACP_AGENTS.values() if len(a.env_required) == 0]
@@ -86,16 +86,16 @@ class TestACPRunner:
 
     @pytest.mark.asyncio
     async def test_missing_env_raises(self):
-        """Gemini requires GEMINI_API_KEY which is not set in test env."""
+        """Agents with hard env requirements fail before spawning a process."""
         import os
 
-        old = os.environ.pop("GEMINI_API_KEY", None)
+        old = os.environ.pop("BLACKBOX_API_KEY", None)
         try:
             with pytest.raises(ACPEnvMissingError):
-                await run_acp_prompt("gemini", cwd=pathlib.Path("/tmp"), system_text="test", user_text="test")
+                await run_acp_prompt("blackbox", cwd=pathlib.Path("/tmp"), system_text="test", user_text="test")
         finally:
             if old:
-                os.environ["GEMINI_API_KEY"] = old
+                os.environ["BLACKBOX_API_KEY"] = old
 
     @pytest.mark.asyncio
     async def test_cursor_sdk_missing_env_raises(self):
