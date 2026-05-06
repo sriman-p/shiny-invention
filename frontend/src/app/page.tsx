@@ -1,14 +1,5 @@
 /**
- * page.tsx (Dashboard) — The main landing page of the ReqLens application.
- *
- * Displays three sections as specified in the implementation doc:
- *   1. Summary stats cards — project count, total runs, active runs
- *   2. Recent runs table — last 10 runs across all projects with status badges
- *   3. Projects grid — cards for each registered project with quick-launch actions
- *
- * Data is fetched via React Query from two endpoints:
- *   - GET /api/v1/runs (recent runs)
- *   - GET /api/v1/projects (all projects)
+ * page.tsx (Dashboard) — Animated dashboard with staggered entrance and live counters.
  */
 'use client';
 
@@ -17,214 +8,196 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StatusBadge } from '@/components/status-badge';
+import { PageWrapper, FadeIn, StaggerList, motion, fadeInUp, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
-import {
-  ArrowRight,
-  Plus,
-  FolderOpen,
-  Activity,
-  FlaskConical,
-  Code,
-} from 'lucide-react';
+import { ArrowRight, Plus, FolderOpen, Activity, FlaskConical, Code } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+
+/** Animated number counter — counts up from 0 to target using requestAnimationFrame */
+function AnimatedCount({ value }: { value: number }) {
+  const [display, setDisplay] = useState(0);
+  const prevValueRef = useRef(value);
+  useEffect(() => {
+    prevValueRef.current = value;
+  });
+  useEffect(() => {
+    let raf: number;
+    const duration = 600;
+    const start = performance.now();
+    const from = 0;
+    const tick = (now: number) => {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(from + eased * (value - from)));
+      if (progress < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // Only re-run when the target value actually changes
+  }, [value]);
+  return <>{display}</>;
+}
 
 export default function DashboardPage() {
-  // Fetch the 10 most recent pipeline runs across all projects
-  const { data: runs = [] } = useQuery({
-    queryKey: ['recent-runs'],
-    queryFn: api.getRecentRuns,
-  });
+  const { data: runs = [] } = useQuery({ queryKey: ['recent-runs'], queryFn: api.getRecentRuns });
+  const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: api.getProjects });
 
-  // Fetch all registered projects for the stats + project grid
-  const { data: projects = [] } = useQuery({
-    queryKey: ['projects'],
-    queryFn: api.getProjects,
-  });
-
-  // Compute summary stats for the top cards
   const activeRuns = runs.filter((r) => r.status === 'running').length;
   const completedRuns = runs.filter((r) => r.status === 'succeeded').length;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
-      {/* ---- Page header ---- */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Overview of your projects and recent pipeline activity
-          </p>
-        </div>
-        <Link href="/projects/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Project
-          </Button>
-        </Link>
-      </div>
-
-      {/* ---- Summary stat cards ---- */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          title="Projects"
-          value={projects.length}
-          description="Registered projects"
-          icon={<FolderOpen className="h-4 w-4" />}
-        />
-        <StatCard
-          title="Total Runs"
-          value={runs.length}
-          description={`${completedRuns} succeeded`}
-          icon={<Activity className="h-4 w-4" />}
-        />
-        <StatCard
-          title="Active"
-          value={activeRuns}
-          description="Currently running"
-          icon={<FlaskConical className="h-4 w-4" />}
-        />
-      </div>
-
-      {/* ---- Main content: runs table + project grid ---- */}
-      <div className="grid gap-6 lg:grid-cols-5">
-        {/* Recent runs table — takes up 3 of 5 columns on large screens */}
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Recent Runs</CardTitle>
-            <CardDescription>Last 10 pipeline runs across all projects</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {runs.length === 0 ? (
-              /* Empty state — plain text with a single action, per spec */
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Activity className="h-8 w-8 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">No runs yet</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">
-                  Create a project and run the pipeline to see results here.
-                </p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[140px]">Project</TableHead>
-                    <TableHead className="w-[120px]">Status</TableHead>
-                    <TableHead>Started</TableHead>
-                    <TableHead className="w-[40px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {runs.map((run) => (
-                    <TableRow key={run.id} className="group">
-                      <TableCell className="font-medium text-sm">{run.project_name}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={run.status} />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {run.started_at
-                          ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true })
-                          : 'Not started'}
-                      </TableCell>
-                      <TableCell>
-                        <Link href={`/projects/${run.project}/runs/${run.id}`}>
-                          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Projects grid — takes up 2 of 5 columns on large screens */}
-        <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-sm font-medium text-muted-foreground px-1">Projects</h2>
-          {projects.length === 0 ? (
-            <Card>
-              <CardContent className="py-8 text-center">
-                <FolderOpen className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">No projects yet</p>
-                <Link href="/projects/new" className="mt-3 inline-block">
-                  <Button variant="outline" size="sm">
-                    <Plus className="mr-1.5 h-3.5 w-3.5" />
-                    Create your first project
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {projects.map((project) => (
-                <Link key={project.id} href={`/projects/${project.id}`} className="block group">
-                  <Card className="transition-colors hover:border-foreground/10">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-1 min-w-0">
-                          <h3 className="text-sm font-medium truncate group-hover:text-foreground">
-                            {project.name}
-                          </h3>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Code className="h-3 w-3 shrink-0" />
-                            <span className="truncate font-mono">{project.language}</span>
-                            <span className="text-muted-foreground/40">|</span>
-                            <span>{project.test_framework}</span>
-                          </div>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground transition-colors shrink-0 mt-0.5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Helper Components
-// ---------------------------------------------------------------------------
-
-/**
- * StatCard — A compact card showing a single metric with an icon.
- * Used in the top summary row of the dashboard.
- */
-function StatCard({
-  title,
-  value,
-  description,
-  icon,
-}: {
-  title: string;
-  value: number;
-  description: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-5">
+    <PageWrapper className="p-8 max-w-7xl mx-auto space-y-8">
+      {/* Header */}
+      <FadeIn>
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-            {icon}
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+            <p className="text-sm text-muted-foreground mt-1">Overview of your projects and pipeline activity</p>
           </div>
+          <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+            <Link href="/projects/new">
+              <Button><Plus className="mr-2 h-4 w-4" />New Project</Button>
+            </Link>
+          </motion.div>
         </div>
-        <p className="text-2xl font-semibold mt-2">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-      </CardContent>
-    </Card>
+      </FadeIn>
+
+      {/* Stat cards with animated counters */}
+      <div className="grid gap-4 md:grid-cols-3">
+        {[
+          { title: 'Projects', value: projects.length, desc: 'Registered projects', icon: FolderOpen, color: 'text-blue-500' },
+          { title: 'Total Runs', value: runs.length, desc: `${completedRuns} succeeded`, icon: Activity, color: 'text-emerald-500' },
+          { title: 'Active', value: activeRuns, desc: 'Currently running', icon: FlaskConical, color: 'text-amber-500' },
+        ].map((stat, i) => (
+          <FadeIn key={stat.title} delay={i * 0.08}>
+            <motion.div whileHover={{ y: -2, transition: { duration: 0.2 } }}>
+              <Card className="overflow-hidden relative group">
+                {/* Subtle top accent line */}
+                <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-current to-transparent opacity-0 group-hover:opacity-30 transition-opacity duration-300 ${stat.color}`} />
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">{stat.title}</p>
+                    <div className={`h-8 w-8 rounded-md bg-muted/80 flex items-center justify-center ${stat.color}`}>
+                      <stat.icon className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <p className="text-3xl font-semibold mt-2 tabular-nums">
+                    <AnimatedCount value={stat.value} />
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{stat.desc}</p>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </FadeIn>
+        ))}
+      </div>
+
+      {/* Main content */}
+      <div className="grid gap-6 lg:grid-cols-5">
+        {/* Runs table */}
+        <FadeIn className="lg:col-span-3">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Recent Runs</CardTitle>
+              <CardDescription>Last 10 pipeline runs across all projects</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {runs.length === 0 ? (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-16 text-center">
+                  <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}>
+                    <Activity className="h-10 w-10 text-muted-foreground/20 mb-4" />
+                  </motion.div>
+                  <p className="text-sm text-muted-foreground">No runs yet</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">Create a project and run the pipeline to see results here.</p>
+                </motion.div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[140px]">Project</TableHead>
+                      <TableHead className="w-[120px]">Status</TableHead>
+                      <TableHead>Started</TableHead>
+                      <TableHead className="w-[40px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {runs.map((run, i) => (
+                      <motion.tr
+                        key={run.id}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05, ...springSmooth }}
+                        className="group border-b border-border last:border-0"
+                      >
+                        <TableCell className="font-medium text-sm">{run.project_name}</TableCell>
+                        <TableCell><StatusBadge status={run.status} /></TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {run.started_at ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true }) : 'Not started'}
+                        </TableCell>
+                        <TableCell>
+                          <Link href={`/projects/${run.project}/runs/${run.id}`}>
+                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5" />
+                          </Link>
+                        </TableCell>
+                      </motion.tr>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </FadeIn>
+
+        {/* Projects grid */}
+        <FadeIn className="lg:col-span-2">
+          <div className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground px-1">Projects</h2>
+            {projects.length === 0 ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}>
+                    <FolderOpen className="h-10 w-10 text-muted-foreground/20 mx-auto mb-4" />
+                  </motion.div>
+                  <p className="text-sm text-muted-foreground">No projects yet</p>
+                  <Link href="/projects/new" className="mt-3 inline-block">
+                    <Button variant="outline" size="sm"><Plus className="mr-1.5 h-3.5 w-3.5" />Create your first project</Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            ) : (
+              <StaggerList className="space-y-2">
+                {projects.map((project) => (
+                  <motion.div key={project.id} variants={fadeInUp} transition={springSmooth}>
+                    <Link href={`/projects/${project.id}`} className="block group">
+                      <motion.div whileHover={{ x: 3, transition: { duration: 0.15 } }}>
+                        <Card className="transition-colors duration-150 hover:border-foreground/10 hover:bg-accent/30">
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1 min-w-0">
+                                <h3 className="text-sm font-medium truncate">{project.name}</h3>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Code className="h-3 w-3 shrink-0" />
+                                  <span className="font-mono">{project.language}</span>
+                                  <span className="text-muted-foreground/30">|</span>
+                                  <span>{project.test_framework}</span>
+                                </div>
+                              </div>
+                              <ArrowRight className="h-4 w-4 text-muted-foreground/20 group-hover:text-muted-foreground/60 transition-all group-hover:translate-x-0.5 shrink-0 mt-0.5" />
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    </Link>
+                  </motion.div>
+                ))}
+              </StaggerList>
+            )}
+          </div>
+        </FadeIn>
+      </div>
+    </PageWrapper>
   );
 }

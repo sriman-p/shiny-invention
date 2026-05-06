@@ -1,25 +1,14 @@
 /**
- * status-badge.tsx — Reusable status indicator badge used across the app.
- *
- * Provides consistent, semantic color coding for run/stage statuses:
- *   - emerald for success
- *   - rose for failure
- *   - blue for running/active
- *   - zinc for pending/idle
- *   - amber for cancelled/warning
- *
- * Following the spec's "non-AI aesthetic" rule: uses Lucide icons instead of
- * emoji, and semantic colors only (no saturated brand colors).
+ * status-badge.tsx — Animated status indicators with Linear-style micro-interactions.
  */
+'use client';
+
 import { Badge } from '@/components/ui/badge';
 import { CircleCheck, CircleDashed, CircleX, Loader2, Ban } from 'lucide-react';
 import type { RunStatus, StageStatus } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { motion } from 'motion/react';
 
-/**
- * Color mapping for each status — applied as Tailwind classes to the Badge.
- * Uses low-opacity backgrounds with higher-opacity text for a subtle look.
- */
 const STATUS_STYLES: Record<string, string> = {
   succeeded: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
   failed: 'bg-rose-500/10 text-rose-600 border-rose-500/20',
@@ -29,45 +18,42 @@ const STATUS_STYLES: Record<string, string> = {
   skipped: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
 };
 
-/** Icon mapping — each status gets a distinct Lucide icon */
-const STATUS_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  succeeded: CircleCheck,
-  failed: CircleX,
-  running: Loader2,
-  pending: CircleDashed,
-  cancelled: Ban,
-  skipped: CircleDashed,
-};
-
-/**
- * StatusBadge — Renders a pill-shaped badge with an icon and label
- * indicating the current status of a run or stage.
- */
 export function StatusBadge({ status, className }: { status: RunStatus | StageStatus; className?: string }) {
-  const Icon = STATUS_ICONS[status] || CircleDashed;
-  const isSpinning = status === 'running';
+  const Icon = { succeeded: CircleCheck, failed: CircleX, running: Loader2, pending: CircleDashed, cancelled: Ban, skipped: CircleDashed }[status] || CircleDashed;
 
   return (
-    <Badge variant="outline" className={cn('gap-1.5 font-medium', STATUS_STYLES[status] || STATUS_STYLES.pending, className)}>
-      <Icon className={cn('h-3 w-3', isSpinning && 'animate-spin')} />
-      {status}
-    </Badge>
+    <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
+      <Badge variant="outline" className={cn('gap-1.5 font-medium', STATUS_STYLES[status] || STATUS_STYLES.pending, className)}>
+        <Icon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
+        {status}
+      </Badge>
+    </motion.div>
   );
 }
 
-/**
- * StageStatusIcon — Renders just the icon for a pipeline stage status.
- * Used in the pipeline graph where space is limited.
- */
+/** Animated stage icon with a pulsing ring when running */
 export function StageStatusIcon({ status }: { status: StageStatus }) {
-  switch (status) {
-    case 'succeeded':
-      return <CircleCheck className="h-4 w-4 text-emerald-600" />;
-    case 'running':
-      return <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />;
-    case 'failed':
-      return <CircleX className="h-4 w-4 text-rose-600" />;
-    default:
-      return <CircleDashed className="h-4 w-4 text-zinc-400" />;
+  if (status === 'running') {
+    return (
+      <div className="relative">
+        <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-pulse-ring" />
+        <Loader2 className="h-5 w-5 text-blue-500 animate-spin relative" />
+      </div>
+    );
   }
+  if (status === 'succeeded') {
+    return (
+      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 15, delay: 0.1 }}>
+        <CircleCheck className="h-5 w-5 text-emerald-500" />
+      </motion.div>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 15 }}>
+        <CircleX className="h-5 w-5 text-rose-500" />
+      </motion.div>
+    );
+  }
+  return <CircleDashed className="h-5 w-5 text-zinc-500/40" />;
 }

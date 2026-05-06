@@ -1,22 +1,5 @@
 /**
- * projects/[id]/runs/[runId]/page.tsx — Pipeline run detail page.
- *
- * The "flagship page" of the application. Displays:
- *
- *   1. Run header — Run ID (monospace), status badge, timing, project name
- *
- *   2. Pipeline graph — 6 stage cards in a horizontal row with arrows between
- *      them. Each card shows the stage name, status icon, agent name, and
- *      elapsed time. The active/running stage has a pulsing border. Clicking
- *      a stage selects it for the detail tabs below.
- *
- *   3. Stage detail tabs:
- *      - Stream: Real-time log of SSE events (session updates, tool calls)
- *      - Output: Pretty-printed JSON of the stage's Pydantic output
- *      - Artifacts: List of files saved to the run's artifacts directory
- *
- * The page polls the run endpoint every 2 seconds while the run is active,
- * and subscribes to the SSE stream for real-time event updates.
+ * Run detail page — animated pipeline graph with visual progress beam.
  */
 'use client';
 
@@ -31,26 +14,21 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatusBadge, StageStatusIcon } from '@/components/status-badge';
+import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock, ArrowRight } from 'lucide-react';
+import { Clock, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { StageName, StageStatus } from '@/lib/types';
+import { Button } from '@/components/ui/button';
 
-/** All 6 pipeline stages in execution order */
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
 
 export default function RunDetailPage() {
   const params = useParams();
   const runId = params.runId as string;
-
-  // Which stage the user has selected to view details for
   const [activeStage, setActiveStage] = useState<StageName>('parse');
+  const [copied, setCopied] = useState(false);
 
-  /**
-   * Fetch the run with all stage execution details.
-   * Polls every 2 seconds while the run is active (running/pending),
-   * stops polling once the run reaches a terminal state.
-   */
   const { data: run, isLoading } = useQuery({
     queryKey: ['run', runId],
     queryFn: () => api.getRun(runId),
@@ -60,219 +38,236 @@ export default function RunDetailPage() {
     },
   });
 
-  /**
-   * SSE connection — only active while the run is executing.
-   * Events are accumulated in state and displayed in the Stream tab.
-   */
   const eventsUrl = run?.status === 'running' ? api.getRunEventsUrl(runId) : null;
   const { events } = useEventStream(eventsUrl);
 
-  // Helper: get the execution status of a specific stage
   const getStageStatus = (stage: StageName): StageStatus => {
     const se = run?.stages?.find((s) => s.stage === stage);
-    if (se) return se.status as StageStatus;
-    return 'pending';
+    return (se?.status as StageStatus) || 'pending';
   };
 
-  // Helper: get the agent name for a specific stage
   const getStageAgent = (stage: StageName): string => {
     const se = run?.stages?.find((s) => s.stage === stage);
-    return se?.agent_id || '—';
+    return se?.agent_id || '';
   };
 
-  // Helper: get elapsed time for a specific stage in human-readable format
   const getStageLatency = (stage: StageName): string | null => {
     const se = run?.stages?.find((s) => s.stage === stage);
     if (se?.latency_ms) return `${(se.latency_ms / 1000).toFixed(1)}s`;
     return null;
   };
 
-  // The selected stage's full execution data (for output/artifacts tabs)
   const activeStageData = run?.stages?.find((s) => s.stage === activeStage);
-
-  // Filter SSE events to only show those relevant to the selected stage
   const stageEvents = events.filter((e) => !e.stage || e.stage === activeStage);
 
-  // Loading state
+  // Compute overall pipeline progress: how many stages completed out of 6
+  const completedStages = STAGES.filter((s) => getStageStatus(s) === 'succeeded').length;
+  const progressPct = (completedStages / STAGES.length) * 100;
+
+  const handleCopy = () => {
+    if (activeStageData?.output_payload) {
+      navigator.clipboard.writeText(JSON.stringify(activeStageData.output_payload, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-8 max-w-6xl mx-auto space-y-6">
         <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-20 w-full" />
+        <div className="flex gap-2">{STAGES.map((s) => <Skeleton key={s} className="h-24 w-28" />)}</div>
         <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
-  if (!run) {
-    return (
-      <div className="p-8 max-w-6xl mx-auto">
-        <p className="text-muted-foreground">Run not found.</p>
-      </div>
-    );
-  }
+  if (!run) return <div className="p-8"><p className="text-muted-foreground">Run not found.</p></div>;
 
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-6">
-      {/* ---- Run header ---- */}
-      <div>
+    <PageWrapper className="p-8 max-w-6xl mx-auto space-y-6">
+      {/* Header */}
+      <FadeIn>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold tracking-tight font-mono">
-            Run {run.id.slice(0, 8)}
-          </h1>
+          <h1 className="text-xl font-semibold tracking-tight font-mono">Run {run.id.slice(0, 8)}</h1>
           <StatusBadge status={run.status} />
         </div>
         <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" />
-            {run.started_at
-              ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true })
-              : 'pending'}
+            {run.started_at ? formatDistanceToNow(new Date(run.started_at), { addSuffix: true }) : 'pending'}
           </span>
           <Separator orientation="vertical" className="h-4" />
           <span>{run.project_name}</span>
         </div>
-      </div>
+      </FadeIn>
 
-      {/* ---- Pipeline graph: 6 stage cards in a row ---- */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2">
-        {STAGES.map((stage, i) => {
-          const stageStatus = getStageStatus(stage);
-          const isActive = activeStage === stage;
-          const latency = getStageLatency(stage);
+      {/* Pipeline progress bar — smooth animated width */}
+      <FadeIn>
+        <div className="relative">
+          <div className="h-1 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-gradient-to-r from-blue-500 via-emerald-500 to-emerald-400 rounded-full"
+              initial={{ width: 0 }}
+              animate={{ width: `${progressPct}%` }}
+              transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1.5">
+            {completedStages} of {STAGES.length} stages completed
+          </p>
+        </div>
+      </FadeIn>
 
-          return (
-            <div key={stage} className="flex items-center gap-1.5">
-              {/* Stage card — clickable to select for detail view */}
-              <button
-                onClick={() => setActiveStage(stage)}
-                className={cn(
-                  'flex flex-col items-center px-4 py-3 rounded-lg border transition-all min-w-[110px]',
-                  isActive && 'border-foreground/20 bg-accent ring-1 ring-foreground/5',
-                  !isActive && stageStatus === 'running' && 'border-blue-500/30 animate-pulse',
-                  !isActive && stageStatus !== 'running' && 'border-border hover:border-foreground/10 hover:bg-accent/30'
+      {/* Pipeline graph — animated stage cards with connecting lines */}
+      <FadeIn>
+        <div className="relative">
+          {/* Connecting line behind the cards */}
+          <div className="absolute top-1/2 left-6 right-6 h-px bg-border -translate-y-1/2 z-0" />
+          {/* Progress line overlay — fills as stages complete */}
+          <motion.div
+            className="absolute top-1/2 left-6 h-px bg-emerald-500/50 -translate-y-1/2 z-0"
+            initial={{ width: 0 }}
+            animate={{ width: `${progressPct}%` }}
+            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+          />
+
+          <div className="flex items-center justify-between relative z-10">
+            {STAGES.map((stage, i) => {
+              const status = getStageStatus(stage);
+              const isActive = activeStage === stage;
+              const latency = getStageLatency(stage);
+              const agent = getStageAgent(stage);
+
+              return (
+                <motion.button
+                  key={stage}
+                  onClick={() => setActiveStage(stage)}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.08, ...springSmooth }}
+                  whileHover={{ y: -3, transition: { duration: 0.15 } }}
+                  whileTap={{ scale: 0.97 }}
+                  className={cn(
+                    'flex flex-col items-center px-3 py-3 rounded-xl border-2 bg-card min-w-[100px] transition-colors duration-150',
+                    isActive && 'border-foreground/15 shadow-sm',
+                    !isActive && status === 'running' && 'border-blue-500/30',
+                    !isActive && status !== 'running' && 'border-transparent hover:border-border',
+                  )}
+                >
+                  {/* Running: animated beam across the card */}
+                  {status === 'running' && (
+                    <div className="absolute inset-0 rounded-xl overflow-hidden">
+                      <div className="absolute inset-0 animate-beam" />
+                    </div>
+                  )}
+
+                  <span className="text-[11px] font-medium capitalize mb-1.5 relative">{stage}</span>
+                  <div className="relative">
+                    <StageStatusIcon status={status} />
+                  </div>
+                  {agent && <span className="text-[10px] text-muted-foreground/60 mt-1.5 font-mono truncate max-w-[85px] relative">{agent}</span>}
+                  {latency && <span className="text-[10px] text-muted-foreground/40 mt-0.5 tabular-nums relative">{latency}</span>}
+                </motion.button>
+              );
+            })}
+          </div>
+        </div>
+      </FadeIn>
+
+      {/* Detail tabs */}
+      <FadeIn>
+        <Tabs defaultValue="stream">
+          <TabsList>
+            <TabsTrigger value="stream">Stream</TabsTrigger>
+            <TabsTrigger value="output">Output</TabsTrigger>
+            <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="stream" className="mt-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm capitalize flex items-center gap-2">
+                  {run.status === 'running' && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" /></span>}
+                  {activeStage} — stream log
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px]">
+                  {stageEvents.length === 0 ? (
+                    <div className="flex items-center justify-center h-32">
+                      <p className="text-sm text-muted-foreground">{run.status === 'running' ? 'Waiting for events...' : 'No events recorded.'}</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-0 font-mono text-xs">
+                      {stageEvents.map((e, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, x: -6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className="flex gap-3 py-1.5 px-2 rounded hover:bg-muted/30 transition-colors"
+                        >
+                          <span className={cn(
+                            'w-28 shrink-0 font-medium',
+                            e.type.includes('completed') && 'text-emerald-500',
+                            e.type.includes('failed') && 'text-rose-500',
+                            e.type.includes('started') && 'text-blue-500',
+                            e.type.includes('progress') && 'text-muted-foreground/60',
+                          )}>
+                            {e.type}
+                          </span>
+                          <span className="text-foreground/60 break-all">
+                            {typeof e.payload === 'object' ? JSON.stringify(e.payload) : String(e.payload)}
+                          </span>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="output" className="mt-4">
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <CardTitle className="text-sm capitalize">{activeStage} — output</CardTitle>
+                {activeStageData?.output_payload && (
+                  <Button variant="ghost" size="sm" onClick={handleCopy} className="h-7 text-xs gap-1.5">
+                    {copied ? <><Check className="h-3 w-3" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                  </Button>
                 )}
-              >
-                <span className="text-xs font-medium capitalize mb-1.5">{stage}</span>
-                <StageStatusIcon status={stageStatus} />
-                <span className="text-[10px] text-muted-foreground mt-1.5 font-mono truncate max-w-[90px]">
-                  {getStageAgent(stage)}
-                </span>
-                {latency && (
-                  <span className="text-[10px] text-muted-foreground/60 mt-0.5">{latency}</span>
-                )}
-              </button>
-              {/* Arrow between stages */}
-              {i < STAGES.length - 1 && (
-                <ArrowRight className="h-3 w-3 text-muted-foreground/30 shrink-0" />
-              )}
-            </div>
-          );
-        })}
-      </div>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px]">
+                  <pre className="font-mono text-xs whitespace-pre-wrap p-4 bg-muted/20 rounded-lg border border-border/50">
+                    {activeStageData?.output_payload ? JSON.stringify(activeStageData.output_payload, null, 2) : 'No output available.'}
+                  </pre>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-      {/* ---- Stage detail tabs ---- */}
-      <Tabs defaultValue="stream">
-        <TabsList>
-          <TabsTrigger value="stream">Stream</TabsTrigger>
-          <TabsTrigger value="output">Output</TabsTrigger>
-          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-        </TabsList>
-
-        {/* Stream tab: real-time event log from SSE */}
-        <TabsContent value="stream" className="mt-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm capitalize flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                {activeStage} — stream log
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[400px]">
-                {stageEvents.length === 0 ? (
-                  <div className="flex items-center justify-center h-32">
-                    <p className="text-sm text-muted-foreground">
-                      {run.status === 'running' ? 'Waiting for events...' : 'No events recorded.'}
-                    </p>
+          <TabsContent value="artifacts" className="mt-4">
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-sm capitalize">{activeStage} — artifacts</CardTitle></CardHeader>
+              <CardContent>
+                {activeStageData?.status === 'succeeded' ? (
+                  <div className="bg-muted/20 rounded-lg p-4 border border-border/50">
+                    <p className="text-sm text-muted-foreground">Artifacts saved to run directory.</p>
+                    <code className="text-xs font-mono mt-2 block text-muted-foreground/60">GET /api/v1/runs/{run.id}/artifacts/&lt;filename&gt;</code>
                   </div>
                 ) : (
-                  <div className="space-y-0.5 font-mono text-xs">
-                    {stageEvents.map((e, i) => (
-                      <div
-                        key={i}
-                        className="flex gap-3 py-1 px-2 rounded hover:bg-muted/50"
-                      >
-                        {/* Event type label with semantic coloring */}
-                        <span
-                          className={cn(
-                            'w-28 shrink-0 font-medium',
-                            e.type.includes('completed') && 'text-emerald-600',
-                            e.type.includes('failed') && 'text-rose-600',
-                            e.type.includes('started') && 'text-blue-600',
-                            e.type.includes('progress') && 'text-muted-foreground'
-                          )}
-                        >
-                          {e.type}
-                        </span>
-                        {/* Event payload */}
-                        <span className="text-foreground/70 break-all">
-                          {typeof e.payload === 'object'
-                            ? JSON.stringify(e.payload)
-                            : String(e.payload)}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-center h-32">
+                    <p className="text-sm text-muted-foreground">No artifacts available yet.</p>
                   </div>
                 )}
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Output tab: pretty-printed JSON of the stage's Pydantic model output */}
-        <TabsContent value="output" className="mt-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm capitalize">{activeStage} — output</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[400px]">
-                <pre className="font-mono text-xs whitespace-pre-wrap p-3 bg-muted/30 rounded-md">
-                  {activeStageData?.output_payload
-                    ? JSON.stringify(activeStageData.output_payload, null, 2)
-                    : 'No output available.'}
-                </pre>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Artifacts tab: files saved to the run's artifacts directory */}
-        <TabsContent value="artifacts" className="mt-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm capitalize">{activeStage} — artifacts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {activeStageData?.status === 'succeeded' ? (
-                <div className="bg-muted/30 rounded-md p-4">
-                  <p className="text-sm text-muted-foreground">
-                    Artifacts saved to run directory. Use the API to retrieve specific files.
-                  </p>
-                  <code className="text-xs font-mono mt-2 block text-muted-foreground/70">
-                    GET /api/v1/runs/{run.id}/artifacts/&lt;filename&gt;
-                  </code>
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-32">
-                  <p className="text-sm text-muted-foreground">No artifacts available yet.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </FadeIn>
+    </PageWrapper>
   );
 }
