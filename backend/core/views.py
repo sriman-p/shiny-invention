@@ -112,6 +112,9 @@ def agents_list(request: HttpRequest) -> Response:
                 "id": spec.id,
                 "display_name": spec.display_name,
                 "command": spec.command,
+                "args": spec.args,
+                "runner": spec.runner,
+                "model": spec.model,
                 "available": command_available and env_available,
                 "command_on_path": command_available,
                 "env_vars_set": env_available,
@@ -209,7 +212,7 @@ def project_runs_create(request: HttpRequest, project_id: UUID) -> Response:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
     permissions = request.data.get("permissions", "auto") if request.data else "auto"
-    agent_configs = list(project.agents.filter(enabled=True).values())
+    agent_configs = AgentConfigSerializer(project.agents.filter(enabled=True), many=True).data
     config_snapshot = {
         "permissions": permissions,
         "agents": agent_configs,

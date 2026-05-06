@@ -15,8 +15,11 @@ This module contains two test classes:
 Run with: cd backend && uv run pytest  (or: uv run python manage.py test)
 """
 
+from unittest.mock import patch
+
 from django.test import TestCase
 
+from core.models import AgentConfig, Project, Run
 from pipeline.contracts import (
     CodeSymbol,
     ParseOutput,
@@ -95,6 +98,10 @@ class APITest(TestCase):
         assert isinstance(data, list)
         assert len(data) > 0
         assert "claude-code" in [a["id"] for a in data]
+        cursor_sdk = next(a for a in data if a["id"] == "cursor-sdk-composer-2")
+        assert cursor_sdk["runner"] == "cursor-sdk"
+        assert cursor_sdk["model"] == "composer-2"
+        assert cursor_sdk["args"]
 
     def test_projects_list(self):
         """Verify GET /api/v1/projects returns an empty list when no projects exist."""
@@ -116,6 +123,30 @@ class APITest(TestCase):
         assert response.status_code == 201
         data = response.json()
         assert data["name"] == "test-project"
+
+    def test_create_run_snapshots_agent_configs_as_json(self):
+        """Verify POST /api/v1/projects/<id>/runs stores JSON-serializable config."""
+        project = Project.objects.create(
+            name="test-project",
+            code_path="/tmp/test",
+            requirements_path="/tmp/test/requirements.md",
+        )
+        agent_config = AgentConfig.objects.create(project=project, stage="parse", agent_id="cursor")
+
+        async def noop_run_pipeline(*args, **kwargs):
+            return None
+
+        with patch("core.views.run_pipeline", noop_run_pipeline):
+            response = self.client.post(
+                f"/api/v1/projects/{project.id}/runs",
+                data={"permissions": "auto"},
+                content_type="application/json",
+            )
+
+        assert response.status_code == 201
+        run = Run.objects.get(id=response.json()["id"])
+        assert run.config_snapshot["agents"][0]["id"] == str(agent_config.id)
+        assert run.config_snapshot["agents"][0]["agent_id"] == "cursor"
 
     def test_fs_validate(self):
         """Verify GET /api/v1/fs/validate correctly reports that /tmp exists."""

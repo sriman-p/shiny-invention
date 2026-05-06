@@ -20,18 +20,21 @@ and all env vars set).
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
 class AgentSpec:
     """
-    Specification for a single ACP-compatible AI agent.
+    Specification for a single agent runner.
 
     Attributes:
         id: Unique string identifier (e.g., "claude-code", "codex").
         display_name: Human-readable name for UI display.
         command: CLI executable name that must be on the system PATH.
         args: Additional CLI arguments to pass when invoking the agent.
+        runner: How ReqLens should invoke this agent ("acp" or "cursor-sdk").
+        model: Optional model id for SDK-backed runners.
         env_required: List of environment variable names that must be set
             for this agent to function (typically API keys).
         notes: Optional descriptive text shown in the agent list UI.
@@ -41,8 +44,13 @@ class AgentSpec:
     display_name: str
     command: str
     args: list[str] = field(default_factory=list)
+    runner: str = "acp"
+    model: str | None = None
     env_required: list[str] = field(default_factory=list)
     notes: str = ""
+
+
+CURSOR_SDK_BRIDGE = Path(__file__).resolve().parent / "cursor_sdk" / "runner.mjs"
 
 
 # Master registry of all supported ACP agents, keyed by agent ID.
@@ -51,17 +59,33 @@ ACP_AGENTS: dict[str, AgentSpec] = {
     "claude-code": AgentSpec(
         id="claude-code",
         display_name="Claude Code",
-        command="claude",
-        args=["acp"],
-        env_required=["ANTHROPIC_API_KEY"],
-        notes="Anthropic's coding agent over ACP.",
+        command="npx",
+        args=["--yes", "@agentclientprotocol/claude-agent-acp@0.32.0"],
+        notes="Claude Agent SDK adapter over ACP. Uses your Claude Code auth or ANTHROPIC_API_KEY.",
     ),
     "codex": AgentSpec(
         id="codex",
         display_name="OpenAI Codex CLI",
-        command="codex",
-        args=["acp"],
-        env_required=["OPENAI_API_KEY"],
+        command="npx",
+        args=["--yes", "@zed-industries/codex-acp@0.13.0"],
+        notes="Codex ACP adapter. Uses ChatGPT login, CODEX_API_KEY, or OPENAI_API_KEY.",
+    ),
+    "cursor": AgentSpec(
+        id="cursor",
+        display_name="Cursor Agent",
+        command="cursor",
+        args=["agent", "acp"],
+        notes="Cursor Agent's native ACP server. Uses your Cursor login or CURSOR_API_KEY.",
+    ),
+    "cursor-sdk-composer-2": AgentSpec(
+        id="cursor-sdk-composer-2",
+        display_name="Cursor SDK (Composer 2)",
+        command="node",
+        args=[str(CURSOR_SDK_BRIDGE)],
+        runner="cursor-sdk",
+        model="composer-2",
+        env_required=["CURSOR_API_KEY"],
+        notes="TypeScript SDK bridge using Composer 2. Cursor account billing and eligible discounts apply.",
     ),
     "gemini": AgentSpec(
         id="gemini",

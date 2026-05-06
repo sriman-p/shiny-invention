@@ -203,6 +203,21 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# OS / editor cruft
+.DS_Store
+.idea/
+
+# Node / frontend package manager caches and build outputs
+node_modules/
+.pnpm-store/
+.next/
+out/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
 # Ruff stuff:
 .ruff_cache/
 

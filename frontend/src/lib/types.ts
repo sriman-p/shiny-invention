@@ -14,6 +14,9 @@ export interface AgentSpec {
   id: string;
   display_name: string;
   command: string;
+  args: string[];
+  runner: string;
+  model: string | null;
   available: boolean;
   command_on_path: boolean;
   env_vars_set: boolean;

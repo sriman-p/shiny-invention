@@ -3,12 +3,17 @@
 #
 # Provides convenient shortcuts for common development tasks. All backend
 # commands use `uv run` to ensure the correct virtual environment and
-# dependencies are used. All frontend commands use `pnpm`.
+# dependencies are used. Frontend uses Corepack-driven pnpm from
+# frontend/package.json "packageManager" (pnpm 9 works on Node 20+;
+# global Homebrew pnpm 11 requires Node 22+).
 #
 # Usage: make <target>
 # =============================================================================
 
 .PHONY: install dev-backend dev-frontend migrate seed sweep test lint
+
+# Django dev server: first attempted port (see dev-backend).
+BACKEND_PORT ?= 8000
 
 # -- Setup & Dependencies ----------------------------------------------------
 
@@ -17,20 +22,21 @@
 # Run this first after cloning the repository.
 install:
 	cd backend && uv sync
-	cd frontend && pnpm install
+	cd backend/acp_client/cursor_sdk && npm install
+	cd frontend && corepack enable && CI=1 pnpm install
 
 # -- Development Servers ------------------------------------------------------
 
-# Start the Django development server on port 8000.
-# The backend serves the REST API at http://localhost:8000/api/v1/.
-# Hot-reloads on Python file changes.
+# Start the Django development server on the first free port in
+# [BACKEND_PORT, BACKEND_PORT + 9] (defaults from 8000) so an old runserver
+# does not block startup. Logs show the chosen port. Example: BACKEND_PORT=9000 make dev-backend
 dev-backend:
-	cd backend && uv run python manage.py runserver 8000
+	cd backend && PORT=$$(uv run python pick_free_port.py --start $(BACKEND_PORT)) && uv run python manage.py runserver $$PORT
 
 # Start the frontend development server (typically on port 3000).
 # Proxies API requests to the backend server.
 dev-frontend:
-	cd frontend && pnpm dev
+	cd frontend && corepack enable && pnpm dev
 
 # -- Database -----------------------------------------------------------------
 
@@ -62,7 +68,7 @@ sweep:
 # is configured (frontend tests are optional during early development).
 test:
 	cd backend && uv run pytest
-	cd frontend && pnpm test 2>/dev/null || true
+	cd frontend && corepack enable && pnpm test 2>/dev/null || true
 
 # Run linters for both backend and frontend.
 # Backend uses ruff for both linting and format checking.
@@ -72,4 +78,4 @@ test:
 lint:
 	cd backend && uv run ruff check .
 	cd backend && uv run ruff format --check .
-	cd frontend && pnpm lint 2>/dev/null || true
+	cd frontend && corepack enable && pnpm lint 2>/dev/null || true
