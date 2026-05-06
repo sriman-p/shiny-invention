@@ -110,6 +110,7 @@ class StageExecutionSerializer(serializers.ModelSerializer):
             "finished_at",
             "input_payload",
             "output_payload",
+            "raw_updates",
             "error",
             "token_usage",
             "latency_ms",
@@ -131,8 +132,14 @@ class RunListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Run
         fields = [
-            "id", "project", "project_name", "status", "config_snapshot",
-            "started_at", "finished_at", "created_at",
+            "id",
+            "project",
+            "project_name",
+            "status",
+            "config_snapshot",
+            "started_at",
+            "finished_at",
+            "created_at",
         ]
 
 
@@ -192,8 +199,15 @@ class SweepRunSerializer(serializers.ModelSerializer):
     class Meta:
         model = Run
         fields = [
-            "id", "project", "project_name", "status", "config_snapshot",
-            "started_at", "finished_at", "created_at", "stages",
+            "id",
+            "project",
+            "project_name",
+            "status",
+            "config_snapshot",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "stages",
         ]
 
 

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CircleCheck, CircleX, Cpu, Settings, Terminal, Key, ShieldCheck } from 'lucide-react';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
+import { BackButton } from '@/components/back-button';
 
 function runnerLabel(runner: string) {
   return runner === 'cursor-sdk' ? 'Cursor SDK' : 'ACP';
@@ -22,11 +23,14 @@ export default function AgentsSettingsPage() {
   return (
     <PageWrapper className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
       <FadeIn>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Settings className="size-5" />Agent Registry
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">ACP agents for pipeline execution. Install agents and set env vars to enable.</p>
+        <div className="flex flex-col gap-3">
+          <BackButton fallbackHref="/" />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+              <Settings className="size-5" />Agent Registry
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">ACP agents for pipeline execution. Install agents and set env vars to enable.</p>
+          </div>
         </div>
       </FadeIn>
 

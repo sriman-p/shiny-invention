@@ -81,6 +81,9 @@ class AnalyzeStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            on_update=lambda update: on_event(
+                StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
+            ),
         )
 
         try:

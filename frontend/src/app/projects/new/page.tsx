@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { FolderPlus, CircleCheck, CircleX } from 'lucide-react';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
+import { BackButton } from '@/components/back-button';
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -50,9 +51,12 @@ export default function NewProjectPage() {
   return (
     <PageWrapper className="p-8 max-w-2xl mx-auto">
       <FadeIn>
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">New Project</h1>
-          <p className="text-sm text-muted-foreground mt-1">Register a codebase and its requirements document.</p>
+        <div className="mb-6 flex flex-col gap-3">
+          <BackButton fallbackHref="/" />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">New Project</h1>
+            <p className="text-sm text-muted-foreground mt-1">Register a codebase and its requirements document.</p>
+          </div>
         </div>
       </FadeIn>
 

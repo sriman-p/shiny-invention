@@ -16,10 +16,9 @@ Workflow:
   3. After all runs finish, run ANOVA and pairwise statistical tests
   4. Store the metrics summary and statistical report on the Sweep object
 
-The sweep runner modifies the project's AgentConfig records during execution
-to set the prompt_strategy and context_mode for each configuration. This means
-sweeps should not run concurrently on the same project, as they would interfere
-with each other's agent configurations.
+Each spawned Run stores an immutable per-stage configuration snapshot, so a
+sweep can continue in the background without mutating the project's saved
+agent configuration.
 """
 
 import logging
@@ -28,7 +27,7 @@ from typing import Any, Awaitable, Callable
 
 from asgiref.sync import sync_to_async
 
-from .metrics import compute_metrics
+from .metrics import compute_metrics, rank_metrics
 from .stats import generate_markdown_report, run_statistical_analysis
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,9 @@ async def run_sweep(
 
     django.setup()
 
-    from core.models import AgentConfig, Run, Sweep
+    from django.utils import timezone
+
+    from core.models import Run, Sweep
 
     @sync_to_async
     def load_sweep() -> Sweep:
@@ -103,24 +104,25 @@ async def run_sweep(
         return run_obj
 
     @sync_to_async
-    def update_agent_configs(strategy: str, context_mode: str, agent_id: str, model_id: str) -> None:
-        for stage_name in ["parse", "analyze", "map", "generate", "critique", "trace"]:
-            AgentConfig.objects.update_or_create(
-                project=sweep.project,
-                stage=stage_name,
-                defaults={
-                    "agent_id": agent_id,
-                    "model_id": model_id,
-                    "prompt_strategy": strategy,
-                    "context_mode": context_mode,
-                    "enabled": True,
-                },
-            )
-
-    @sync_to_async
     def collect_run_data(run_obj: Run) -> dict[str, Any]:
         run_obj.refresh_from_db()
-        return {"stages": list(run_obj.stages.values("stage", "output_payload", "latency_ms", "token_usage"))}
+        return {
+            "status": run_obj.status,
+            "stages": list(
+                run_obj.stages.values("stage", "status", "output_payload", "latency_ms", "token_usage", "error")
+            ),
+        }
+
+    @sync_to_async
+    def mark_run_failed(run_obj: Run) -> None:
+        Run.objects.filter(id=run_obj.id, status__in=["pending", "running"]).update(
+            status="failed",
+            finished_at=timezone.now(),
+        )
+
+    @sync_to_async
+    def persist_partial_metrics(metrics: list[dict[str, Any]]) -> None:
+        Sweep.objects.filter(id=sweep_id).update(metrics_summary=rank_metrics(metrics))
 
     @sync_to_async
     def check_cancelled() -> bool:
@@ -158,16 +160,11 @@ async def run_sweep(
         # Extract configuration values, with safe defaults for malformed entries
         strategy = config.get("prompt_strategy", "zero_shot") if isinstance(config, dict) else "zero_shot"
         context_mode = config.get("context_mode", "full") if isinstance(config, dict) else "full"
-        agent_id = config.get("agent_id", "claude-code") if isinstance(config, dict) else "claude-code"
-        model_id = config.get("model_id", "") if isinstance(config, dict) else ""
+        agent_id = config.get("agent_id", "codex") if isinstance(config, dict) else "codex"
+        model_id = config.get("model_id", "gpt-5.5/low") if isinstance(config, dict) else "gpt-5.5/low"
 
         # Create an isolated run/artifact directory for this configuration.
         run = await create_run_for_config(strategy, context_mode, agent_id, model_id)
-
-        # Update the project's agent configs for ALL stages to use this
-        # configuration. This is what makes each sweep run use a different
-        # prompt strategy / context mode / agent.
-        await update_agent_configs(strategy, context_mode, agent_id, model_id)
 
         await emit(
             {
@@ -182,9 +179,21 @@ async def run_sweep(
         try:
             from pipeline.orchestrator import run_pipeline
 
-            await run_pipeline(str(run.id))
+            await run_pipeline(
+                str(run.id),
+                on_event=lambda evt, run_id=str(run.id), index=i: emit(
+                    {
+                        "type": "sweep_run_event",
+                        "sweep_id": sweep_id,
+                        "run_id": run_id,
+                        "config_index": index,
+                        "event": evt,
+                    }
+                ),
+            )
         except Exception as e:
             logger.exception("Sweep run %s failed: %s", run.id, e)
+            await mark_run_failed(run)
 
         # Check again after the run completes
         if await check_cancelled():
@@ -202,6 +211,7 @@ async def run_sweep(
         metrics["model_id"] = model_id
         metrics["run_id"] = str(run.id)
         all_metrics.append(metrics)
+        await persist_partial_metrics(all_metrics)
 
         await emit(
             {
@@ -215,19 +225,21 @@ async def run_sweep(
 
     if was_cancelled:
         # Store partial results if any
+        sweep = await load_sweep()
+        sweep.status = "cancelled"
         if all_metrics:
-            sweep = await load_sweep()
-            sweep.metrics_summary = all_metrics
-            await save_sweep(sweep)
+            sweep.metrics_summary = rank_metrics(all_metrics)
+        await save_sweep(sweep)
         await emit({"type": "sweep_cancelled", "sweep_id": sweep_id})
         return
 
     # Perform statistical analysis comparing all configurations
-    stats = run_statistical_analysis(all_metrics)
+    ranked_metrics = rank_metrics(all_metrics)
+    stats = run_statistical_analysis(ranked_metrics)
     markdown_report = generate_markdown_report(stats)
 
     # Store results on the sweep object
-    sweep.metrics_summary = all_metrics
+    sweep.metrics_summary = ranked_metrics
     sweep.stats_report = {**stats, "markdown": markdown_report}
     sweep.status = "succeeded"
     await save_sweep(sweep)
@@ -236,6 +248,6 @@ async def run_sweep(
         {
             "type": "sweep_succeeded",
             "sweep_id": sweep_id,
-            "metrics_summary": all_metrics,
+            "metrics_summary": ranked_metrics,
         }
     )

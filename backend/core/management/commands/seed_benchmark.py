@@ -6,7 +6,7 @@ Usage: python manage.py seed_benchmark
 This command populates the database with a predefined set of small benchmark
 projects that live in the repository under benchmark/projects/. Each project
 gets a full set of agent configurations (one per pipeline stage), all using
-claude-code with zero_shot prompting and full context by default.
+Codex GPT-5.5 with zero_shot prompting and full context by default.
 
 These benchmark projects are used for:
   - Development and manual testing (quick end-to-end pipeline runs)
@@ -77,7 +77,8 @@ class Command(BaseCommand):
                     project=project,
                     stage=stage,
                     defaults={
-                        "agent_id": "claude-code",
+                        "agent_id": "codex",
+                        "model_id": "gpt-5.5/low",
                         "prompt_strategy": "zero_shot",
                         "context_mode": "full",
                         "enabled": True,

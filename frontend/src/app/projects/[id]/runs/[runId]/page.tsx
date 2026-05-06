@@ -22,8 +22,120 @@ import { cn } from '@/lib/utils';
 import type { StageName, StageStatus } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { BackButton } from '@/components/back-button';
 
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
+
+function extractUpdateText(update: Record<string, unknown>): string {
+  const content = update.content;
+  if (content && typeof content === 'object' && 'text' in content) {
+    return String((content as { text?: unknown }).text ?? '');
+  }
+  if ('text' in update) return String(update.text ?? '');
+  if ('message' in update) return String(update.message ?? '');
+  return '';
+}
+
+function tryParseJson(value: string): unknown | null {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAgentResponse(text: string) {
+  const blocks: string[] = [];
+  const fencePattern = /```(?:json)?\s*([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = fencePattern.exec(text)) !== null) {
+    const block = match[1]?.trim();
+    if (block) blocks.push(block);
+  }
+
+  if (blocks.length === 0) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) blocks.push(text.slice(start, end + 1));
+  }
+
+  const seen = new Set<string>();
+  const parsedBlocks = blocks
+    .map((block) => ({ block, parsed: tryParseJson(block) }))
+    .filter(({ block, parsed }) => {
+      const key = parsed ? JSON.stringify(parsed) : block;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  if (parsedBlocks.length > 0) {
+    return {
+      parsed: parsedBlocks[0].parsed,
+      pretty: parsedBlocks
+        .map(({ block, parsed }) => (parsed ? JSON.stringify(parsed, null, 2) : block))
+        .join('\n\n'),
+    };
+  }
+
+  return { parsed: null, pretty: text.trim() };
+}
+
+function RequirementResponse({ data, fallback }: { data: unknown; fallback: string }) {
+  const requirements =
+    data &&
+    typeof data === 'object' &&
+    'requirements' in data &&
+    Array.isArray((data as { requirements?: unknown }).requirements)
+      ? ((data as { requirements: Record<string, unknown>[] }).requirements)
+      : null;
+
+  if (!requirements) {
+    return (
+      <pre className="text-xs whitespace-pre-wrap leading-5 p-4 bg-muted/20 rounded-lg border border-border/50">
+        {fallback || 'No agent response chunks captured yet.'}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {requirements.map((requirement, index) => {
+        const criteria = Array.isArray(requirement.acceptance_criteria)
+          ? requirement.acceptance_criteria.map(String)
+          : [];
+        const priority = requirement.priority ? String(requirement.priority) : '';
+        return (
+          <div key={String(requirement.id ?? index)} className="rounded-lg border bg-muted/15 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs text-muted-foreground">{String(requirement.id ?? `REQ-${index + 1}`)}</span>
+              <span className="text-sm font-medium">{String(requirement.title ?? 'Untitled requirement')}</span>
+              {priority && (
+                <span className="rounded border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                  {priority}
+                </span>
+              )}
+            </div>
+            {Boolean(requirement.description) && (
+              <p className="mt-2 text-sm leading-5 text-muted-foreground">{String(requirement.description)}</p>
+            )}
+            {criteria.length > 0 && (
+              <ul className="mt-3 space-y-1.5 text-xs text-foreground/75">
+                {criteria.map((criterion) => (
+                  <li key={criterion} className="flex gap-2">
+                    <span className="mt-1 size-1.5 shrink-0 rounded-full bg-foreground/45" />
+                    <span>{criterion}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -74,6 +186,13 @@ export default function RunDetailPage() {
 
   const activeStageData = run?.stages?.find((s) => s.stage === activeStage);
   const stageEvents = events.filter((e) => !e.stage || e.stage === activeStage);
+  const persistedUpdates = activeStageData?.raw_updates ?? [];
+  const liveUpdates = stageEvents
+    .filter((e) => e.type === 'stage_agent_update' && e.payload && typeof e.payload === 'object')
+    .map((e) => e.payload as Record<string, unknown>);
+  const agentUpdates = [...persistedUpdates, ...liveUpdates];
+  const agentText = agentUpdates.map(extractUpdateText).filter(Boolean).join('');
+  const formattedAgentResponse = normalizeAgentResponse(agentText);
 
   // Compute overall pipeline progress: how many stages completed out of 6
   const completedStages = STAGES.filter((s) => getStageStatus(s) === 'succeeded').length;
@@ -105,10 +224,13 @@ export default function RunDetailPage() {
     <PageWrapper className="p-8 max-w-6xl mx-auto flex flex-col gap-6">
       {/* Header */}
       <FadeIn>
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold tracking-tight font-mono">Run {run.id.slice(0, 8)}</h1>
-            <StatusBadge status={run.status} />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-3">
+            <BackButton fallbackHref={`/projects/${run.project}`} />
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-semibold tracking-tight font-mono">Run {run.id.slice(0, 8)}</h1>
+              <StatusBadge status={run.status} />
+            </div>
           </div>
 
           {canCancel && (
@@ -219,6 +341,7 @@ export default function RunDetailPage() {
           </TabsList>
 
           <TabsContent value="stream" className="mt-4">
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm capitalize flex items-center gap-2">
@@ -261,6 +384,17 @@ export default function RunDetailPage() {
                 </ScrollArea>
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm capitalize">{activeStage} — live response</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px]">
+                  <RequirementResponse data={formattedAgentResponse.parsed} fallback={formattedAgentResponse.pretty} />
+                </ScrollArea>
+              </CardContent>
+            </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="output" className="mt-4">

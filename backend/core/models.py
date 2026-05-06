@@ -178,6 +178,7 @@ class StageExecution(BaseModel):
     finished_at = models.DateTimeField(null=True, blank=True)
     input_payload = models.JSONField(default=dict)
     output_payload = models.JSONField(null=True, blank=True)
+    raw_updates = models.JSONField(default=list)
     error = models.TextField(blank=True, default="")
     token_usage = models.JSONField(default=dict)
     latency_ms = models.IntegerField(null=True, blank=True)

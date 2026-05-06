@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { Play, BarChart3, Save, Code, FileText, FolderOpen, ArrowRight, CheckCircle2 } from 'lucide-react';
 import type { AgentSpec, StageName } from '@/lib/types';
 import { toast } from 'sonner';
+import { BackButton } from '@/components/back-button';
 
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
 const STRATEGIES = ['zero_shot', 'chain_of_thought', 'few_shot_static', 'few_shot_dynamic'];
@@ -61,8 +62,8 @@ export default function ProjectDetailPage() {
     const existing = project?.agents?.find((a) => a.stage === stage);
     const override = agentConfigs[stage];
     return {
-      agent_id: override?.agent_id || existing?.agent_id || 'claude-code',
-      model_id: override?.model_id ?? existing?.model_id ?? '',
+      agent_id: override?.agent_id || existing?.agent_id || 'codex',
+      model_id: override?.model_id ?? existing?.model_id ?? 'gpt-5.5/low',
       prompt_strategy: override?.prompt_strategy || existing?.prompt_strategy || 'zero_shot',
       context_mode: override?.context_mode || existing?.context_mode || 'full',
     };
@@ -126,12 +127,15 @@ export default function ProjectDetailPage() {
   return (
     <PageWrapper className="p-8 max-w-7xl mx-auto flex flex-col gap-6">
       <FadeIn>
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
-            <div className="flex items-center gap-2 mt-1.5 text-sm text-muted-foreground">
-              <Code className="size-3.5" /><span>{project.language}</span>
-              <span className="text-muted-foreground/30">|</span><span>{project.test_framework}</span>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-3">
+            <BackButton fallbackHref="/" />
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
+              <div className="flex items-center gap-2 mt-1.5 text-sm text-muted-foreground">
+                <Code className="size-3.5" /><span>{project.language}</span>
+                <span className="text-muted-foreground/30">|</span><span>{project.test_framework}</span>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -224,7 +228,11 @@ export default function ProjectDetailPage() {
                                 <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectGroup>
-                                    {agents.map((a: AgentSpec) => (<SelectItem key={a.id} value={a.id} disabled={!a.available}>{a.display_name}</SelectItem>))}
+                                    {agents.map((a: AgentSpec) => (
+                                      <SelectItem key={a.id} value={a.id}>
+                                        {a.display_name}{a.available ? '' : ' (not configured)'}
+                                      </SelectItem>
+                                    ))}
                                   </SelectGroup>
                                 </SelectContent>
                               </Select>
@@ -235,6 +243,9 @@ export default function ProjectDetailPage() {
                                   value={modelSelectValue}
                                   onValueChange={(v) => {
                                     if (v === DEFAULT_MODEL_VALUE) {
+                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
+                                      updateStageConfig(stage, 'model_id', '');
+                                    } else if (v === 'agent-default') {
                                       setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
                                       updateStageConfig(stage, 'model_id', '');
                                     } else if (v === CUSTOM_MODEL_VALUE) {

@@ -37,6 +37,7 @@ from .stages.base import StageContext, StageEvent
 
 logger = logging.getLogger(__name__)
 
+
 class RunCancelledError(Exception):
     """Raised when a run is cancelled mid-execution."""
 
@@ -95,7 +96,7 @@ async def run_pipeline(
             return {}
         return {
             str(ac["stage"]): {
-                "agent_id": str(ac.get("agent_id") or "claude-code"),
+                "agent_id": str(ac.get("agent_id") or "codex"),
                 "model_id": str(ac.get("model_id") or ""),
                 "prompt_strategy": str(ac.get("prompt_strategy") or "zero_shot"),
                 "context_mode": str(ac.get("context_mode") or "full"),
@@ -130,6 +131,11 @@ async def run_pipeline(
     @sync_to_async
     def save_stage_execution(stage_execution: StageExecution) -> None:
         stage_execution.save()
+
+    @sync_to_async
+    def append_stage_update(stage_execution: StageExecution, update: dict[str, Any]) -> None:
+        stage_execution.raw_updates = [*list(stage_execution.raw_updates or []), update]
+        stage_execution.save(update_fields=["raw_updates", "updated_at"])
 
     run = await load_run()
     project = run.project
@@ -181,8 +187,8 @@ async def run_pipeline(
 
         # Look up the agent config for this stage, falling back to defaults
         ac = agent_configs.get(stage_name)
-        agent_id = ac["agent_id"] if ac else "claude-code"
-        model_id = ac["model_id"] if ac else ""
+        agent_id = ac["agent_id"] if ac else "codex"
+        model_id = ac["model_id"] if ac else "gpt-5.5/low"
         prompt_strategy = ac["prompt_strategy"] if ac else "zero_shot"
         context_mode = ac["context_mode"] if ac else "full"
 
@@ -221,9 +227,11 @@ async def run_pipeline(
                 # Best-effort cancellation check during long-running stages.
                 if await load_run_status() == "cancelled":
                     raise RunCancelledError("Run cancelled")
+                if evt.type == "agent_update":
+                    await append_stage_update(se, evt.payload)
                 await emit(
                     {
-                        "type": "stage_progress",
+                        "type": "stage_agent_update" if evt.type == "agent_update" else "stage_progress",
                         "run_id": run_id,
                         "stage": stage_name,
                         "ts": _now_iso(),

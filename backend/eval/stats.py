@@ -45,10 +45,12 @@ def run_statistical_analysis(metrics_by_config: list[dict[str, Any]]) -> dict[st
         Dict with "anova", "pairwise", and "effect_sizes" sections. Returns
         a note if fewer than 2 configurations are provided (no comparison possible).
     """
-    if len(metrics_by_config) < 2:
-        return {"note": "Not enough data for statistical analysis"}
+    best = _best_configuration(metrics_by_config)
 
-    report: dict[str, Any] = {"anova": {}, "pairwise": {}, "effect_sizes": {}}
+    if len(metrics_by_config) < 2:
+        return {"note": "Not enough data for statistical analysis", "best_configuration": best}
+
+    report: dict[str, Any] = {"anova": {}, "pairwise": {}, "effect_sizes": {}, "best_configuration": best}
 
     # These are the quality metrics we compare across configurations
     metric_keys = ["traceability_score", "test_pass_rate", "critique_accept_rate"]
@@ -136,6 +138,19 @@ def run_statistical_analysis(metrics_by_config: list[dict[str, Any]]) -> dict[st
     return report
 
 
+def _best_configuration(metrics_by_config: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not metrics_by_config:
+        return None
+    return min(
+        metrics_by_config,
+        key=lambda row: (
+            int(row.get("rank", 999999)) if isinstance(row.get("rank"), int) else 999999,
+            -float(row.get("quality_score", 0.0) or 0.0),
+            float(row.get("latency_total_ms", 0.0) or 0.0),
+        ),
+    )
+
+
 def generate_markdown_report(stats: dict[str, Any]) -> str:
     """
     Generate a human-readable Markdown report from statistical analysis results.
@@ -150,6 +165,18 @@ def generate_markdown_report(stats: dict[str, Any]) -> str:
         Markdown-formatted string with tables for ANOVA and pairwise results.
     """
     lines = ["# Statistical Analysis Report", ""]
+
+    best = stats.get("best_configuration")
+    if isinstance(best, dict):
+        lines.append("## Best Configuration")
+        lines.append("")
+        lines.append(
+            f"Rank 1: {best.get('prompt_strategy', 'unknown')} / {best.get('context_mode', 'unknown')} "
+            f"with {float(best.get('quality_score', 0.0) or 0.0):.3f} quality score, "
+            f"{float(best.get('traceability_score', 0.0) or 0.0):.1%} traceability, and "
+            f"{float(best.get('critique_accept_rate', 0.0) or 0.0):.1%} critique accept rate."
+        )
+        lines.append("")
 
     if stats.get("anova"):
         lines.append("## ANOVA Results")
