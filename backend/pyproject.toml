@@ -21,6 +21,7 @@ dependencies = [
     "rich>=13.9",
     "httpx>=0.28",
     "python-dotenv>=1.0",
+    "matplotlib>=3.10.9",
 ]
 
 [dependency-groups]
@@ -54,5 +55,5 @@ django_settings_module = "reqlens.settings"
 DJANGO_SETTINGS_MODULE = "reqlens.settings"
 pythonpath = ["."]
 asyncio_mode = "auto"
-testpaths = ["core", "pipeline", "eval", "acp_client"]
+testpaths = ["core", "pipeline", "eval", "acp_client", "tests"]
 python_files = ["test_*.py", "tests.py"]
