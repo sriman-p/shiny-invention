@@ -10,26 +10,24 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/status-badge';
+import { AgentModelPicker, getFlatModelOptions } from '@/components/agent-model-picker';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { formatDistanceToNow } from 'date-fns';
 import Link from 'next/link';
 import { Play, BarChart3, Save, Code, FileText, FolderOpen, ArrowRight, CheckCircle2 } from 'lucide-react';
-import type { AgentSpec, StageName } from '@/lib/types';
+import type { StageName } from '@/lib/types';
 import { toast } from 'sonner';
 import { BackButton } from '@/components/back-button';
 
 const STAGES: StageName[] = ['parse', 'analyze', 'map', 'generate', 'critique', 'trace'];
 const STRATEGIES = ['zero_shot', 'chain_of_thought', 'few_shot_static', 'few_shot_dynamic'];
 const CONTEXT_MODES = ['minimal', 'local', 'module', 'full'];
-const DEFAULT_MODEL_VALUE = '__agent_default__';
-const CUSTOM_MODEL_VALUE = '__custom_model__';
 type StageConfig = { agent_id: string; model_id: string; prompt_strategy: string; context_mode: string };
 const STAGE_DESC: Record<string, string> = {
   parse: 'Extract requirements from document',
@@ -52,11 +50,6 @@ export default function ProjectDetailPage() {
   const [customModelStages, setCustomModelStages] = useState<Record<string, boolean>>({});
 
   const getAgent = (agentId: string) => agents.find((agent) => agent.id === agentId);
-
-  const getModelOptions = (agentId: string) => {
-    const agent = getAgent(agentId);
-    return Array.from(new Set([agent?.model, ...(agent?.model_options ?? [])].filter(Boolean))) as string[];
-  };
 
   const getStageConfig = (stage: StageName): StageConfig => {
     const existing = project?.agents?.find((a) => a.stage === stage);
@@ -204,81 +197,49 @@ export default function ProjectDetailPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[200px]">Stage</TableHead>
-                        <TableHead>Agent</TableHead>
-                        <TableHead>Model</TableHead>
-                        <TableHead>Strategy</TableHead>
-                        <TableHead>Context</TableHead>
+                        <TableHead className="w-[180px]">Stage</TableHead>
+                        <TableHead>Provider &amp; Model</TableHead>
+                        <TableHead className="w-[170px]">Strategy</TableHead>
+                        <TableHead className="w-[130px]">Context</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {STAGES.map((stage, i) => {
                         const config = getStageConfig(stage);
-                        const modelOptions = getModelOptions(config.agent_id);
-                        const hasCustomModel = customModelStages[stage] || Boolean(config.model_id && !modelOptions.includes(config.model_id));
-                        const modelSelectValue = hasCustomModel ? CUSTOM_MODEL_VALUE : config.model_id || DEFAULT_MODEL_VALUE;
-                        const defaultModel = getAgent(config.agent_id)?.model;
+                        const modelOptions = getFlatModelOptions(getAgent(config.agent_id));
+                        const isCustom =
+                          customModelStages[stage] ||
+                          Boolean(config.model_id && !modelOptions.includes(config.model_id));
                         return (
-                          <motion.tr key={stage} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06, ...springSmooth }} className="border-b border-border last:border-0">
-                            <TableCell>
-                              <div><span className="font-medium capitalize text-sm">{stage}</span><p className="text-[11px] text-muted-foreground/70 mt-0.5">{STAGE_DESC[stage]}</p></div>
-                            </TableCell>
-                            <TableCell>
-                              <Select value={config.agent_id} onValueChange={(v) => updateStageConfig(stage, 'agent_id', v)}>
-                                <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectGroup>
-                                    {agents.map((a: AgentSpec) => (
-                                      <SelectItem key={a.id} value={a.id}>
-                                        {a.display_name}{a.available ? '' : ' (not configured)'}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectGroup>
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex w-[190px] flex-col gap-1">
-                                <Select
-                                  value={modelSelectValue}
-                                  onValueChange={(v) => {
-                                    if (v === DEFAULT_MODEL_VALUE) {
-                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
-                                      updateStageConfig(stage, 'model_id', '');
-                                    } else if (v === 'agent-default') {
-                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
-                                      updateStageConfig(stage, 'model_id', '');
-                                    } else if (v === CUSTOM_MODEL_VALUE) {
-                                      setCustomModelStages((custom) => ({ ...custom, [stage]: true }));
-                                      updateStageConfig(stage, 'model_id', config.model_id || '');
-                                    } else {
-                                      setCustomModelStages((custom) => ({ ...custom, [stage]: false }));
-                                      updateStageConfig(stage, 'model_id', v);
-                                    }
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectGroup>
-                                      <SelectItem value={DEFAULT_MODEL_VALUE}>{defaultModel ? `Default (${defaultModel})` : 'Agent default'}</SelectItem>
-                                      {modelOptions.map((model) => (<SelectItem key={model} value={model}>{model}</SelectItem>))}
-                                      <SelectItem value={CUSTOM_MODEL_VALUE}>Custom model...</SelectItem>
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                {modelSelectValue === CUSTOM_MODEL_VALUE && (
-                                  <Input
-                                    value={config.model_id}
-                                    onChange={(event) => updateStageConfig(stage, 'model_id', event.target.value)}
-                                    placeholder="model id"
-                                    className="h-8 text-xs font-mono"
-                                  />
-                                )}
+                          <motion.tr
+                            key={stage}
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: i * 0.06, ...springSmooth }}
+                            className="border-b border-border last:border-0 align-top"
+                          >
+                            <TableCell className="py-3">
+                              <div>
+                                <span className="font-medium capitalize text-sm">{stage}</span>
+                                <p className="text-[11px] text-muted-foreground/70 mt-0.5">{STAGE_DESC[stage]}</p>
                               </div>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="py-3">
+                              <AgentModelPicker
+                                agents={agents}
+                                agentId={config.agent_id}
+                                modelId={config.model_id}
+                                isCustom={isCustom}
+                                onAgentChange={(value) => updateStageConfig(stage, 'agent_id', value)}
+                                onModelChange={({ modelId, isCustom: nextCustom }) => {
+                                  setCustomModelStages((custom) => ({ ...custom, [stage]: nextCustom }));
+                                  updateStageConfig(stage, 'model_id', modelId);
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="py-3">
                               <Select value={config.prompt_strategy} onValueChange={(v) => updateStageConfig(stage, 'prompt_strategy', v)}>
-                                <SelectTrigger className="w-[155px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectGroup>
                                     {STRATEGIES.map((s) => (<SelectItem key={s} value={s}>{s.replace(/_/g, ' ')}</SelectItem>))}
@@ -286,9 +247,9 @@ export default function ProjectDetailPage() {
                                 </SelectContent>
                               </Select>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="py-3">
                               <Select value={config.context_mode} onValueChange={(v) => updateStageConfig(stage, 'context_mode', v)}>
-                                <SelectTrigger className="w-[115px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectGroup>
                                     {CONTEXT_MODES.map((m) => (<SelectItem key={m} value={m}>{m}</SelectItem>))}

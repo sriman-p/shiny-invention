@@ -8,9 +8,10 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CircleCheck, CircleX, Cpu, Settings, Terminal, Key, ShieldCheck } from 'lucide-react';
+import { CircleCheck, CircleX, Cpu, Settings, Terminal, Key, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { PageWrapper, FadeIn, motion, springSmooth } from '@/components/motion';
 import { BackButton } from '@/components/back-button';
+import { cn } from '@/lib/utils';
 
 function runnerLabel(runner: string) {
   return runner === 'cursor-sdk' ? 'Cursor SDK' : 'ACP';
@@ -50,21 +51,25 @@ export default function AgentsSettingsPage() {
             <CardDescription>CLI command must be on PATH and required env vars must be set.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="rounded-lg border overflow-hidden">
-              <Table>
+            <div className="rounded-lg border overflow-x-auto">
+              <Table className="w-full">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[200px]">Agent</TableHead>
-                    <TableHead className="w-[130px]">Command</TableHead>
-                    <TableHead className="w-[150px]">Runner</TableHead>
-                    <TableHead className="w-[80px] text-center">On PATH</TableHead>
-                    <TableHead>Required Env Vars</TableHead>
-                    <TableHead className="w-[100px] text-center">Status</TableHead>
+                    {/* Min-widths instead of fixed widths so the table can
+                        reflow to fill available space without one long
+                        `notes` paragraph squashing the rest of the columns. */}
+                    <TableHead className="min-w-[180px]">Agent</TableHead>
+                    <TableHead className="min-w-[110px] w-[140px]">Command</TableHead>
+                    <TableHead className="min-w-[120px] w-[150px]">Runner</TableHead>
+                    <TableHead className="w-[70px] text-center">On PATH</TableHead>
+                    <TableHead className="min-w-[220px]">Authentication</TableHead>
+                    <TableHead className="w-[90px] text-center">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {agents.map((agent, i) => {
                     const commandLabel = [agent.command, ...agent.args].join(' ');
+                    const authStates = agent.auth_mode_states ?? [];
 
                     return (
                       <motion.tr
@@ -72,15 +77,24 @@ export default function AgentsSettingsPage() {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.05, ...springSmooth }}
-                        className="border-b border-border last:border-0 group"
+                        className="border-b border-border last:border-0 group align-top"
                       >
-                        <TableCell>
-                          <div>
-                            <span className="font-medium text-sm group-hover:text-foreground transition-colors">{agent.display_name}</span>
-                            {agent.notes && <p className="text-[11px] text-muted-foreground/60 mt-0.5 leading-tight">{agent.notes}</p>}
+                        <TableCell className="py-3 align-top">
+                          <div className="max-w-[260px]">
+                            <span className="font-medium text-sm group-hover:text-foreground transition-colors">
+                              {agent.display_name}
+                            </span>
+                            {agent.notes && (
+                              <p
+                                className="mt-0.5 text-[10px] leading-snug text-muted-foreground/60 line-clamp-2 cursor-help"
+                                title={agent.notes}
+                              >
+                                {agent.notes}
+                              </p>
+                            )}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-3">
                           <code
                             className="font-mono text-xs bg-muted/60 px-2 py-1 rounded inline-flex max-w-[150px] items-center gap-1.5 border border-border/50"
                             title={commandLabel}
@@ -89,7 +103,7 @@ export default function AgentsSettingsPage() {
                             <span className="truncate">{agent.command}</span>
                           </code>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-3">
                           <div className="flex flex-wrap gap-1">
                             <Badge variant="outline" className="text-[10px] gap-1 bg-muted/30">
                               <Cpu className="size-2.5" />{runnerLabel(agent.runner)}
@@ -101,26 +115,75 @@ export default function AgentsSettingsPage() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="text-center py-3">
                           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.3 + i * 0.05, type: 'spring', stiffness: 500, damping: 15 }}>
                             {agent.command_on_path
                               ? <CircleCheck className="size-4 text-success mx-auto" />
                               : <CircleX className="size-4 text-destructive mx-auto" />}
                           </motion.div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 flex-wrap">
-                            {agent.env_required.length === 0
-                              ? <span className="text-xs text-muted-foreground/40">None required</span>
-                              : agent.env_required.map((env) => (
-                                  <Badge key={env} variant="outline" className="text-[10px] font-mono gap-1 bg-muted/30">
-                                    <Key className="size-2.5" />{env}
-                                  </Badge>
-                                ))
-                            }
-                          </div>
+                        <TableCell className="py-3">
+                          {authStates.length > 0 ? (
+                            <div className="flex flex-col gap-1.5">
+                              {authStates.map((mode) => (
+                                <div key={mode.id} className="flex items-start gap-2">
+                                  {mode.satisfied ? (
+                                    <ShieldCheck className="size-3.5 mt-0.5 shrink-0 text-success" />
+                                  ) : (
+                                    <ShieldAlert className="size-3.5 mt-0.5 shrink-0 text-muted-foreground/50" />
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <span
+                                      className={cn(
+                                        'text-xs',
+                                        mode.satisfied
+                                          ? 'text-success font-medium'
+                                          : 'text-muted-foreground',
+                                        agent.active_auth_mode === mode.id && 'underline underline-offset-2',
+                                      )}
+                                    >
+                                      {mode.label}
+                                      {agent.active_auth_mode === mode.id && (
+                                        <span className="ml-1 text-[10px] uppercase tracking-wider">(active)</span>
+                                      )}
+                                    </span>
+                                    {!mode.satisfied && mode.missing.length > 0 && (
+                                      <div className="mt-0.5 flex flex-wrap gap-1">
+                                        {mode.missing.map((env) => (
+                                          <Badge
+                                            key={env}
+                                            variant="outline"
+                                            className="text-[10px] font-mono gap-1 bg-muted/20 text-muted-foreground/70"
+                                          >
+                                            <Key className="size-2.5" />{env}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : agent.env_required.length === 0 ? (
+                            <span className="text-xs text-muted-foreground/40">No env vars required</span>
+                          ) : (
+                            <div className="flex gap-1 flex-wrap">
+                              {agent.env_required.map((env) => (
+                                <Badge
+                                  key={env}
+                                  variant="outline"
+                                  className={cn(
+                                    'text-[10px] font-mono gap-1',
+                                    agent.env_vars_set ? 'bg-success/10 text-success border-success/20' : 'bg-muted/30',
+                                  )}
+                                >
+                                  <Key className="size-2.5" />{env}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="text-center py-3">
                           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 + i * 0.05 }}>
                             <Badge variant="outline" className={agent.available ? 'bg-success/10 text-success border-success/20' : 'bg-muted text-muted-foreground border-border'}>
                               {agent.available ? 'Available' : 'Missing'}

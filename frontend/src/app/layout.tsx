@@ -16,6 +16,7 @@ import { GeistMono } from 'geist/font/mono';
 import './globals.css';
 import { Providers } from './providers';
 import { AppSidebar } from '@/components/app-sidebar';
+import { Breadcrumbs } from '@/components/breadcrumbs';
 
 /** Page metadata — shown in the browser tab and search engine results */
 export const metadata: Metadata = {
@@ -42,7 +43,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* Persistent sidebar — always visible on desktop */}
             <AppSidebar />
             {/* Main content area — scrolls independently of sidebar */}
-            <main className="flex-1 overflow-auto bg-background">{children}</main>
+            <div className="flex-1 flex flex-col overflow-hidden bg-background">
+              <Breadcrumbs />
+              <main className="flex-1 overflow-auto">{children}</main>
+            </div>
           </div>
         </Providers>
       </body>

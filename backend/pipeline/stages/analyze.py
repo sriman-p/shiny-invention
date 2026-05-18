@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from acp_client.runner import ACPResult, run_acp_prompt
 from pipeline.contracts import AnalyzeOutput, ParseOutput
+from pipeline.few_shot_examples import get_static_examples
 from pipeline.prompts import get_prompt_template
 
 from .base import Stage, StageContext, StageEvent
@@ -61,11 +62,12 @@ class AnalyzeStage(Stage):
 
         schema = AnalyzeOutput.model_json_schema()
         template = get_prompt_template(ctx.prompt_strategy, self.name)
+        examples = get_static_examples(ctx.project_name, self.name, ctx.prompt_strategy)
 
         user_text = template.format(
             schema=schema,
             code_path=ctx.code_path,
-            examples="",
+            examples=examples,
             dynamic_examples="",
         )
 
@@ -81,17 +83,22 @@ class AnalyzeStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            run_id=ctx.run_id,
+            permission_mode=ctx.permission_mode,
+            on_permission_request=ctx.on_permission_request,
             on_update=lambda update: on_event(
                 StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
             ),
         )
 
+        await self.emit_acp_events(ctx, on_event, result)
+
         try:
             data = self.extract_json(result.text)
-            # The agent may not include the parse output in its response,
-            # so we inject it if missing to maintain the output chain
-            if "parse" not in data:
-                data["parse"] = parse_output.model_dump()
+            # Preserve real pipeline provenance. Agents may echo or invent
+            # nested prior outputs, but downstream metrics must use the actual
+            # previous stage result.
+            data["parse"] = parse_output.model_dump()
             output = AnalyzeOutput.model_validate(data)
         except Exception as e:
             logger.warning("Analyze stage: parse failed: %s", e)

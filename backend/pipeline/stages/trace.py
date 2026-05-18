@@ -32,6 +32,7 @@ from pipeline.contracts import (
     ParseOutput,
     TraceOutput,
 )
+from pipeline.few_shot_examples import get_static_examples
 from pipeline.prompts import get_prompt_template
 
 from .base import Stage, StageContext, StageEvent
@@ -90,6 +91,7 @@ class TraceStage(Stage):
 
         schema = TraceOutput.model_json_schema()
         template = get_prompt_template(ctx.prompt_strategy, self.name)
+        examples = get_static_examples(ctx.project_name, self.name, ctx.prompt_strategy)
 
         # Navigate through the nested output chain to access requirements and tests.
         # The chain is: critique -> generate -> map -> analyze -> parse -> requirements
@@ -102,7 +104,7 @@ class TraceStage(Stage):
             schema=schema,
             requirements=requirements_text,
             tests=tests_text,
-            examples="",
+            examples=examples,
             dynamic_examples="",
         )
 
@@ -117,16 +119,22 @@ class TraceStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            run_id=ctx.run_id,
+            permission_mode=ctx.permission_mode,
+            on_permission_request=ctx.on_permission_request,
             on_update=lambda update: on_event(
                 StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
             ),
         )
 
+        await self.emit_acp_events(ctx, on_event, result)
+
         try:
             data = self.extract_json(result.text)
-            # Inject the critique output if the agent didn't include it
-            if "critique" not in data:
-                data["critique"] = critique_output.model_dump()
+            data = self.select_output_fields(data, "matrix", "gap_report_md")
+            # Preserve real pipeline provenance even if the agent echoes or
+            # invents nested critique/generate/map data in its response.
+            data["critique"] = critique_output.model_dump()
             output = TraceOutput.model_validate(data)
         except Exception as e:
             logger.warning("Trace stage: parse failed: %s", e)

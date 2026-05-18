@@ -17,6 +17,7 @@ get improved versions from the agent.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -30,11 +31,32 @@ from pipeline.contracts import (
     MapOutput,
     ParseOutput,
 )
+from pipeline.few_shot_examples import get_static_examples
 from pipeline.prompts import get_prompt_template
 
 from .base import Stage, StageContext, StageEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_test_path(path: str) -> str:
+    """Return a loose path key for matching generated tests to critique scores."""
+    return re.sub(r"[^a-z0-9]+", "", path.lower())
+
+
+def _reconcile_score_test_files(data: dict, generate_output: GenerateOutput) -> None:
+    """Rewrite score paths to the exact generated file paths when they clearly match."""
+    generated_files = {test.file_path for test in generate_output.tests}
+    generated_by_key = {_canonical_test_path(test.file_path): test.file_path for test in generate_output.tests}
+    for score in data.get("scores") or []:
+        if not isinstance(score, dict):
+            continue
+        test_file = score.get("test_file")
+        if not isinstance(test_file, str) or test_file in generated_files:
+            continue
+        generated_file = generated_by_key.get(_canonical_test_path(test_file))
+        if generated_file:
+            score["test_file"] = generated_file
 
 
 class CritiqueStage(Stage):
@@ -84,6 +106,7 @@ class CritiqueStage(Stage):
 
         schema = CritiqueOutput.model_json_schema()
         template = get_prompt_template(ctx.prompt_strategy, self.name)
+        examples = get_static_examples(ctx.project_name, self.name, ctx.prompt_strategy)
 
         # Summarize each test for the critique prompt (file path, requirement, code length)
         tests_text = "\n".join(
@@ -93,7 +116,7 @@ class CritiqueStage(Stage):
         user_text = template.format(
             schema=schema,
             tests=tests_text,
-            examples="",
+            examples=examples,
             dynamic_examples="",
         )
 
@@ -108,16 +131,23 @@ class CritiqueStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            run_id=ctx.run_id,
+            permission_mode=ctx.permission_mode,
+            on_permission_request=ctx.on_permission_request,
             on_update=lambda update: on_event(
                 StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
             ),
         )
 
+        await self.emit_acp_events(ctx, on_event, result)
+
         try:
             data = self.extract_json(result.text)
-            # Inject the generate output if the agent didn't include it
-            if "generate" not in data:
-                data["generate"] = generate_output.model_dump()
+            data = self.select_output_fields(data, "scores", "revised_tests")
+            _reconcile_score_test_files(data, generate_output)
+            # Preserve real pipeline provenance even if the agent echoes or
+            # invents nested generated tests/mappings in its response.
+            data["generate"] = generate_output.model_dump()
             output = CritiqueOutput.model_validate(data)
         except Exception as e:
             logger.warning("Critique stage: parse failed: %s", e)

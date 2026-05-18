@@ -12,10 +12,11 @@ which provides basic list/detail/edit views for each model.
 
 from django.contrib import admin
 
-from .models import AgentConfig, Project, Run, StageExecution, Sweep
+from .models import AgentConfig, BackgroundTask, Project, Run, StageExecution, Sweep
 
 admin.site.register(Project)
 admin.site.register(AgentConfig)
 admin.site.register(Run)
 admin.site.register(StageExecution)
 admin.site.register(Sweep)
+admin.site.register(BackgroundTask)

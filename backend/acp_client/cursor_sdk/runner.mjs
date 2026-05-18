@@ -86,6 +86,62 @@ function collectMessageText(message) {
   return "";
 }
 
+function pickNumber(...candidates) {
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function collectMessageUsage(message) {
+  // Cursor SDK / OpenAI-style usage may live on the assistant message wrapper
+  // (`message.usage`) or inside the content block (`message.message.usage`).
+  // We accept either shape and normalize numeric fields with snake_case keys.
+  const sources = [message?.usage, message?.message?.usage].filter(Boolean);
+  if (sources.length === 0) {
+    return null;
+  }
+  const usage = {};
+  for (const source of sources) {
+    const input = pickNumber(source.input_tokens, source.inputTokens, source.prompt_tokens);
+    const output = pickNumber(source.output_tokens, source.outputTokens, source.completion_tokens);
+    const total = pickNumber(source.total_tokens, source.totalTokens, source.total);
+    const cacheRead = pickNumber(
+      source.cache_read_input_tokens,
+      source.cacheReadInputTokens,
+      source.cached_tokens,
+    );
+    const cacheCreate = pickNumber(
+      source.cache_creation_input_tokens,
+      source.cacheCreationInputTokens,
+    );
+    if (input !== undefined) usage.input_tokens = (usage.input_tokens || 0) + input;
+    if (output !== undefined) usage.output_tokens = (usage.output_tokens || 0) + output;
+    if (total !== undefined && input === undefined && output === undefined) {
+      usage.total_tokens = (usage.total_tokens || 0) + total;
+    }
+    if (cacheRead !== undefined) {
+      usage.cache_read_input_tokens = (usage.cache_read_input_tokens || 0) + cacheRead;
+    }
+    if (cacheCreate !== undefined) {
+      usage.cache_creation_input_tokens = (usage.cache_creation_input_tokens || 0) + cacheCreate;
+    }
+  }
+  return Object.keys(usage).length > 0 ? usage : null;
+}
+
+function mergeUsage(into, addition) {
+  if (!addition) return into;
+  const result = { ...into };
+  for (const [key, value] of Object.entries(addition)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    result[key] = (result[key] || 0) + value;
+  }
+  return result;
+}
+
 function collectToolCall(message) {
   if (message?.type === "tool_call") {
     return message;
@@ -153,6 +209,7 @@ async function main() {
   const rawUpdates = [];
   const toolCalls = [];
   const textChunks = [];
+  let tokenUsage = {};
 
   try {
     const run = await agent.send(prompt, {
@@ -164,6 +221,11 @@ async function main() {
       },
       onStep: ({ step }) => {
         rawUpdates.push({ type: "step", step });
+        // Steps sometimes carry an aggregated usage snapshot.
+        const stepUsage = collectMessageUsage({ usage: step?.usage });
+        if (stepUsage) {
+          tokenUsage = mergeUsage(tokenUsage, stepUsage);
+        }
       },
     });
 
@@ -180,6 +242,11 @@ async function main() {
         if (text) {
           textChunks.push(text);
         }
+
+        const messageUsage = collectMessageUsage(message);
+        if (messageUsage) {
+          tokenUsage = mergeUsage(tokenUsage, messageUsage);
+        }
       }
     } else {
       rawUpdates.push({ type: "stream_unsupported", reason: run.unsupportedReason("stream") });
@@ -187,6 +254,13 @@ async function main() {
 
     const result = run.supports("wait") ? await run.wait() : undefined;
     const text = result?.result || run.result || textChunks.join("") || "";
+
+    // Final usage takes precedence: prefer the run-level summary if the SDK
+    // exposes one, otherwise keep the streamed total. The Cursor SDK exposes
+    // `result.usage` for completed runs and `run.usage` for in-flight ones.
+    const finalUsage = collectMessageUsage({ usage: result?.usage })
+      || collectMessageUsage({ usage: run?.usage })
+      || tokenUsage;
 
     process.stdout.write(
       JSON.stringify({
@@ -199,7 +273,7 @@ async function main() {
         model: result?.model || run.model || agent.model || { id: model },
         duration_ms: result?.durationMs || run.durationMs,
         git: result?.git || run.git,
-        token_usage: {},
+        token_usage: finalUsage || {},
       }),
     );
   } finally {

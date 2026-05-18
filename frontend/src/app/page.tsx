@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StatusBadge } from '@/components/status-badge';
 import { PageWrapper, FadeIn, StaggerList, motion, fadeInUp, springSmooth } from '@/components/motion';
@@ -43,11 +44,48 @@ function AnimatedCount({ value }: { value: number }) {
 }
 
 export default function DashboardPage() {
-  const { data: runs = [] } = useQuery({ queryKey: ['recent-runs'], queryFn: api.getRecentRuns });
-  const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: api.getProjects });
+  // Refresh recent runs every 4s while at least one is active so the dashboard
+  // feels live without aggressive polling when nothing is happening.
+  const { data: runs = [], isLoading: runsLoading } = useQuery({
+    queryKey: ['recent-runs'],
+    queryFn: api.getRecentRuns,
+    refetchInterval: (query) => {
+      const data = query.state.data ?? [];
+      return data.some((r) => r.status === 'running' || r.status === 'pending') ? 4000 : false;
+    },
+  });
+  const { data: projects = [], isLoading: projectsLoading } = useQuery({
+    queryKey: ['projects'],
+    queryFn: api.getProjects,
+  });
 
   const activeRuns = runs.filter((r) => r.status === 'running').length;
   const completedRuns = runs.filter((r) => r.status === 'succeeded').length;
+
+  if (runsLoading || projectsLoading) {
+    return (
+      <PageWrapper className="p-8 max-w-7xl mx-auto flex flex-col gap-8">
+        <FadeIn>
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-8 w-44" />
+              <Skeleton className="h-4 w-72" />
+            </div>
+            <Skeleton className="h-9 w-32" />
+          </div>
+        </FadeIn>
+        <div className="grid gap-4 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full" />
+          ))}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-5">
+          <Skeleton className="h-72 lg:col-span-3" />
+          <Skeleton className="h-72 lg:col-span-2" />
+        </div>
+      </PageWrapper>
+    );
+  }
 
   return (
     <PageWrapper className="p-8 max-w-7xl mx-auto flex flex-col gap-8">

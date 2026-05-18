@@ -3,10 +3,38 @@ Tests for the evaluation engine: metrics computation and statistical analysis.
 Uses realistic data structures to validate the eval pipeline end-to-end.
 """
 
+import json
+
 import numpy as np
 
 from eval.metrics import compute_metrics, rank_metrics
 from eval.stats import generate_markdown_report, run_statistical_analysis
+
+
+def _parse_stage(*requirement_ids: str) -> dict:
+    return {
+        "stage": "parse",
+        "output_payload": {"requirements": [{"id": req_id} for req_id in requirement_ids]},
+        "latency_ms": 0,
+        "token_usage": {},
+    }
+
+
+def _generate_stage(*requirement_ids: str) -> dict:
+    return {
+        "stage": "generate",
+        "output_payload": {
+            "tests": [
+                {
+                    "requirement_id": req_id,
+                    "file_path": f"tests/test_{req_id.lower().replace('-', '_')}.py",
+                }
+                for req_id in requirement_ids
+            ]
+        },
+        "latency_ms": 0,
+        "token_usage": {},
+    }
 
 
 class TestComputeMetrics:
@@ -22,13 +50,14 @@ class TestComputeMetrics:
         result = compute_metrics(
             {
                 "stages": [
+                    _parse_stage("REQ-001", "REQ-002", "REQ-003"),
                     {
                         "stage": "trace",
                         "output_payload": {
                             "matrix": [
-                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                                {"requirement_id": "REQ-002", "coverage_status": "covered"},
-                                {"requirement_id": "REQ-003", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-001", "coverage_status": "covered", "test_files": ["t1.py"]},
+                                {"requirement_id": "REQ-002", "coverage_status": "covered", "test_files": ["t2.py"]},
+                                {"requirement_id": "REQ-003", "coverage_status": "covered", "test_files": ["t3.py"]},
                             ]
                         },
                         "latency_ms": 100,
@@ -43,12 +72,13 @@ class TestComputeMetrics:
         result = compute_metrics(
             {
                 "stages": [
+                    _parse_stage("REQ-001", "REQ-002", "REQ-003", "REQ-004"),
                     {
                         "stage": "trace",
                         "output_payload": {
                             "matrix": [
-                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                                {"requirement_id": "REQ-002", "coverage_status": "partial"},
+                                {"requirement_id": "REQ-001", "coverage_status": "covered", "test_files": ["t1.py"]},
+                                {"requirement_id": "REQ-002", "coverage_status": "partial", "test_files": ["t2.py"]},
                                 {"requirement_id": "REQ-003", "coverage_status": "uncovered"},
                                 {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
                             ]
@@ -65,6 +95,7 @@ class TestComputeMetrics:
         result = compute_metrics(
             {
                 "stages": [
+                    _parse_stage("REQ-001", "REQ-002"),
                     {
                         "stage": "trace",
                         "output_payload": {
@@ -81,18 +112,88 @@ class TestComputeMetrics:
         )
         assert result["traceability_score"] == 0.0
 
+    def test_metrics_do_not_reward_outputs_without_parsed_requirements(self):
+        result = compute_metrics(
+            {
+                "stages": [
+                    _parse_stage(),
+                    {
+                        "stage": "map",
+                        "output_payload": {
+                            "mappings": [
+                                {
+                                    "requirement_id": "REQ-999",
+                                    "symbol": {"qualified_name": "fake.symbol"},
+                                    "confidence": 1.0,
+                                }
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                    _generate_stage("REQ-999"),
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {
+                                    "requirement_id": "REQ-999",
+                                    "coverage_status": "covered",
+                                    "test_files": ["t.py"],
+                                }
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
+
+        assert result["total_requirements"] == 0
+        assert result["traceability_score"] == 0.0
+        assert result["mapped_requirements_rate"] == 0.0
+        assert result["generation_coverage_rate"] == 0.0
+        assert result["quality_score"] == 0.0
+
+    def test_traceability_dedupes_and_ignores_noncanonical_rows(self):
+        result = compute_metrics(
+            {
+                "stages": [
+                    _parse_stage("REQ-001", "REQ-002"),
+                    {
+                        "stage": "trace",
+                        "output_payload": {
+                            "matrix": [
+                                {"requirement_id": "REQ-001", "coverage_status": "covered", "test_files": ["t1.py"]},
+                                {"requirement_id": "REQ-001", "coverage_status": "partial", "test_files": ["t2.py"]},
+                                {"requirement_id": "REQ-999", "coverage_status": "covered", "test_files": ["t.py"]},
+                            ]
+                        },
+                        "latency_ms": 0,
+                        "token_usage": {},
+                    },
+                ]
+            }
+        )
+
+        assert result["traceability_score"] == 0.5
+        assert result["strict_coverage_score"] == 0.5
+        assert result["trace_matrix_completion_rate"] == 0.5
+
     def test_critique_accept_rate(self):
         result = compute_metrics(
             {
                 "stages": [
+                    _generate_stage("REQ-001", "REQ-002", "REQ-003", "REQ-004"),
                     {
                         "stage": "critique",
                         "output_payload": {
                             "scores": [
-                                {"decision": "accept"},
-                                {"decision": "accept"},
-                                {"decision": "revise"},
-                                {"decision": "reject"},
+                                {"test_file": "tests/test_req_001.py", "decision": "accept"},
+                                {"test_file": "tests/test_req_002.py", "decision": "accept"},
+                                {"test_file": "tests/test_req_003.py", "decision": "revise"},
+                                {"test_file": "tests/test_req_004.py", "decision": "reject"},
                             ]
                         },
                         "latency_ms": 200,
@@ -107,13 +208,14 @@ class TestComputeMetrics:
         result = compute_metrics(
             {
                 "stages": [
+                    _generate_stage("REQ-001", "REQ-002", "REQ-003"),
                     {
                         "stage": "critique",
                         "output_payload": {
                             "scores": [
-                                {"decision": "accept"},
-                                {"decision": "accept"},
-                                {"decision": "accept"},
+                                {"test_file": "tests/test_req_001.py", "decision": "accept"},
+                                {"test_file": "tests/test_req_002.py", "decision": "accept"},
+                                {"test_file": "tests/test_req_003.py", "decision": "accept"},
                             ]
                         },
                         "latency_ms": 0,
@@ -155,19 +257,54 @@ class TestComputeMetrics:
         result = compute_metrics(
             {
                 "stages": [
+                    _parse_stage("REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005"),
                     {"stage": "parse", "latency_ms": 2100, "token_usage": {"input": 1200, "output": 800}},
                     {"stage": "analyze", "latency_ms": 5400, "token_usage": {"input": 3000, "output": 2500}},
                     {"stage": "map", "latency_ms": 3200, "token_usage": {"input": 2800, "output": 1500}},
-                    {"stage": "generate", "latency_ms": 8700, "token_usage": {"input": 4500, "output": 6000}},
+                    {
+                        **_generate_stage("REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005"),
+                        "latency_ms": 8700,
+                        "token_usage": {"input": 4500, "output": 6000},
+                    },
                     {
                         "stage": "critique",
                         "output_payload": {
                             "scores": [
-                                {"decision": "accept", "relevance": 5, "completeness": 5, "correctness": 4},
-                                {"decision": "accept", "relevance": 5, "completeness": 4, "correctness": 4},
-                                {"decision": "revise", "relevance": 4, "completeness": 3, "correctness": 3},
-                                {"decision": "accept", "relevance": 5, "completeness": 5, "correctness": 5},
-                                {"decision": "reject", "relevance": 2, "completeness": 2, "correctness": 1},
+                                {
+                                    "test_file": "tests/test_req_001.py",
+                                    "decision": "accept",
+                                    "relevance": 5,
+                                    "completeness": 5,
+                                    "correctness": 4,
+                                },
+                                {
+                                    "test_file": "tests/test_req_002.py",
+                                    "decision": "accept",
+                                    "relevance": 5,
+                                    "completeness": 4,
+                                    "correctness": 4,
+                                },
+                                {
+                                    "test_file": "tests/test_req_003.py",
+                                    "decision": "revise",
+                                    "relevance": 4,
+                                    "completeness": 3,
+                                    "correctness": 3,
+                                },
+                                {
+                                    "test_file": "tests/test_req_004.py",
+                                    "decision": "accept",
+                                    "relevance": 5,
+                                    "completeness": 5,
+                                    "correctness": 5,
+                                },
+                                {
+                                    "test_file": "tests/test_req_005.py",
+                                    "decision": "reject",
+                                    "relevance": 2,
+                                    "completeness": 2,
+                                    "correctness": 1,
+                                },
                             ]
                         },
                         "latency_ms": 4100,
@@ -177,11 +314,11 @@ class TestComputeMetrics:
                         "stage": "trace",
                         "output_payload": {
                             "matrix": [
-                                {"requirement_id": "REQ-001", "coverage_status": "covered"},
-                                {"requirement_id": "REQ-002", "coverage_status": "covered"},
-                                {"requirement_id": "REQ-003", "coverage_status": "partial"},
+                                {"requirement_id": "REQ-001", "coverage_status": "covered", "test_files": ["t1.py"]},
+                                {"requirement_id": "REQ-002", "coverage_status": "covered", "test_files": ["t2.py"]},
+                                {"requirement_id": "REQ-003", "coverage_status": "partial", "test_files": ["t3.py"]},
                                 {"requirement_id": "REQ-004", "coverage_status": "uncovered"},
-                                {"requirement_id": "REQ-005", "coverage_status": "covered"},
+                                {"requirement_id": "REQ-005", "coverage_status": "covered", "test_files": ["t5.py"]},
                             ]
                         },
                         "latency_ms": 1800,
@@ -290,30 +427,74 @@ class TestStatisticalAnalysis:
             for context in contexts:
                 context_bonus = {"minimal": 0.0, "local": 0.05, "module": 0.10, "full": 0.15}[context]
                 score = base_scores[strategy] + context_bonus + np.random.normal(0, 0.02)
+                bounded = min(max(score, 0), 1)
                 data.append(
                     {
                         "prompt_strategy": strategy,
                         "context_mode": context,
-                        "traceability_score": min(max(score, 0), 1),
+                        "traceability_score": bounded,
                         "test_pass_rate": min(max(score * 0.9, 0), 1),
                         "critique_accept_rate": min(max(score * 0.85, 0), 1),
+                        # Provide quality_score so the new strategy_quality_score
+                        # ANOVA key has a meaningful variance to test against.
+                        "quality_score": bounded,
                     }
                 )
 
         result = run_statistical_analysis(data)
 
         # With 4 clearly different strategies, ANOVA should be significant
+        # for every metric we actually populated above.
         assert "anova" in result
-        anova_keys = list(result["anova"].keys())
-        assert len(anova_keys) > 0
-
-        for key in anova_keys:
+        populated_metric_keys = ["traceability_score", "test_pass_rate", "critique_accept_rate", "quality_score"]
+        for metric in populated_metric_keys:
+            key = f"strategy_{metric}"
+            assert key in result["anova"], f"missing ANOVA entry for {key}"
             assert result["anova"][key]["p_value"] < 0.05, f"ANOVA should be significant for {key}"
             assert result["anova"][key]["eta_squared"] > 0.0
 
         # Should have pairwise comparisons since ANOVA is significant
         assert "pairwise" in result
         assert len(result["pairwise"]) > 0
+
+    def test_stats_report_includes_json_safe_effect_sizes(self):
+        data = [
+            {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "quality_score": np.float64(0.1),
+                "traceability_score": np.float64(0.1),
+                "critique_accept_rate": np.float64(0.1),
+            },
+            {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "quality_score": np.float64(0.12),
+                "traceability_score": np.float64(0.12),
+                "critique_accept_rate": np.float64(0.12),
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "quality_score": np.float64(0.9),
+                "traceability_score": np.float64(0.9),
+                "critique_accept_rate": np.float64(0.9),
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "quality_score": np.float64(0.92),
+                "traceability_score": np.float64(0.92),
+                "critique_accept_rate": np.float64(0.92),
+            },
+        ]
+
+        result = run_statistical_analysis(data)
+
+        assert result["anova"]["strategy_quality_score"]["p_value"] < 0.05
+        assert result["effect_sizes"]["strategy_quality_score"]["eta_squared_magnitude"] == "large"
+        assert result["effect_sizes"]["strategy_quality_score"]["cohens_d_magnitude"] == "large"
+        json.dumps(result, allow_nan=False)
 
     def test_markdown_report_generation(self):
         data = [
@@ -325,11 +506,25 @@ class TestStatisticalAnalysis:
                 "critique_accept_rate": 0.3,
             },
             {
+                "prompt_strategy": "zero_shot",
+                "context_mode": "full",
+                "traceability_score": 0.55,
+                "test_pass_rate": 0.45,
+                "critique_accept_rate": 0.35,
+            },
+            {
                 "prompt_strategy": "chain_of_thought",
                 "context_mode": "full",
                 "traceability_score": 0.9,
                 "test_pass_rate": 0.8,
                 "critique_accept_rate": 0.85,
+            },
+            {
+                "prompt_strategy": "chain_of_thought",
+                "context_mode": "full",
+                "traceability_score": 0.95,
+                "test_pass_rate": 0.85,
+                "critique_accept_rate": 0.9,
             },
         ]
         stats = run_statistical_analysis(data)

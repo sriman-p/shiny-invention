@@ -26,6 +26,7 @@ from pipeline.contracts import (
     MapOutput,
     ParseOutput,
 )
+from pipeline.few_shot_examples import get_static_examples
 from pipeline.prompts import get_prompt_template
 
 from .base import Stage, StageContext, StageEvent
@@ -77,6 +78,7 @@ class GenerateStage(Stage):
 
         schema = GenerateOutput.model_json_schema()
         template = get_prompt_template(ctx.prompt_strategy, self.name)
+        examples = get_static_examples(ctx.project_name, self.name, ctx.prompt_strategy)
 
         # Format the mappings as a readable list showing requirement -> symbol
         mappings_text = "\n".join(
@@ -87,9 +89,9 @@ class GenerateStage(Stage):
 
         user_text = template.format(
             schema=schema,
-            few_shot_examples="(no examples available)",
+            few_shot_examples=examples or "(no examples available)",
             mappings=mappings_text,
-            examples="",
+            examples=examples,
             dynamic_examples="",
         )
 
@@ -104,16 +106,22 @@ class GenerateStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            run_id=ctx.run_id,
+            permission_mode=ctx.permission_mode,
+            on_permission_request=ctx.on_permission_request,
             on_update=lambda update: on_event(
                 StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
             ),
         )
 
+        await self.emit_acp_events(ctx, on_event, result)
+
         try:
             data = self.extract_json(result.text)
-            # Inject the map output if the agent didn't include it
-            if "map" not in data:
-                data["map"] = map_output.model_dump()
+            data = self.select_output_fields(data, "tests")
+            # Preserve real pipeline provenance even if the agent echoes or
+            # invents nested map/analyze data in its response.
+            data["map"] = map_output.model_dump()
             output = GenerateOutput.model_validate(data)
         except Exception as e:
             logger.warning("Generate stage: parse failed: %s", e)

@@ -120,6 +120,27 @@ def _parse_bridge_error(stderr: bytes, stdout: bytes) -> str:
     return "process exited without error output"
 
 
+MODEL_SELECTION_SENTINELS = {"", "default", "agent-default"}
+
+
+def _resolve_advertised_model_id(model_id: str, available_model_ids: list[str]) -> str:
+    """Resolve friendly model ids to ACP-advertised ids with option suffixes.
+
+    Cursor Agent advertises ids like ``composer-2[fast=true]`` while the UI's
+    static catalog may submit ``composer-2``. Prefer the exact id, then a single
+    bracket-suffixed match, and otherwise let the caller decide how to proceed.
+    """
+    if model_id in MODEL_SELECTION_SENTINELS:
+        return ""
+    if model_id in available_model_ids:
+        return model_id
+
+    prefixed_matches = [candidate for candidate in available_model_ids if candidate.split("[", 1)[0] == model_id]
+    if len(prefixed_matches) == 1:
+        return prefixed_matches[0]
+    return ""
+
+
 async def run_cursor_sdk_prompt(
     spec: Any,
     *,
@@ -163,6 +184,21 @@ async def run_cursor_sdk_prompt(
         process.kill()
         await process.wait()
         raise ACPTimeoutError(f"Agent {spec.id} timed out after {timeout_s}s")
+    except asyncio.CancelledError:
+        # Cooperative cancellation from the orchestrator's cancel watcher --
+        # terminate the bridge subprocess so it doesn't keep streaming after
+        # the run row has flipped to "cancelled".
+        if process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        raise
 
     if process.returncode != 0:
         error_text = _parse_bridge_error(stderr, stdout)
@@ -213,6 +249,9 @@ class ReqLensACPClient:
         *,
         cwd: pathlib.Path,
         on_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        run_id: str | None = None,
+        permission_mode: str = "auto",
+        on_permission_request: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
         self.on_update = on_update
@@ -220,6 +259,13 @@ class ReqLensACPClient:
         self.raw_updates: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.usage: dict[str, Any] = {}
+        self.run_id = run_id or ""
+        # "auto" (default) auto-approves all permission requests so non-interactive
+        # runs Just Work. Any other value means the client will register the
+        # permission request via `acp_client.permissions.handle_permission_request`
+        # and wait for a human to resolve it via the REST endpoint.
+        self.permission_mode = permission_mode
+        self.on_permission_request = on_permission_request
 
     def _resolve_path(self, path: str) -> pathlib.Path:
         candidate = pathlib.Path(path)
@@ -252,13 +298,67 @@ class ReqLensACPClient:
             await self.on_update(raw_update)
 
     async def request_permission(self, options: list[Any], session_id: str, tool_call: Any, **kwargs: Any) -> Any:
+        """
+        Handle an ACP permission request.
+
+        In `auto` mode we eagerly approve any `allow_once` option so headless
+        runs proceed without human input. In any other mode we register a
+        pending permission via `acp_client.permissions.handle_permission_request`,
+        broadcast a `permission_required` SSE so the UI can prompt the user,
+        and wait up to 5 minutes for the REST endpoint to resolve it.
+        """
+        from uuid import uuid4
+
         from acp.schema import AllowedOutcome, DeniedOutcome, RequestPermissionResponse
 
-        allow_option = next((option for option in options if getattr(option, "kind", None) == "allow_once"), None)
-        if allow_option is None:
-            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        from .permissions import handle_permission_request
 
-        return RequestPermissionResponse(outcome=AllowedOutcome(outcome="selected", option_id=allow_option.option_id))
+        allow_option = next((option for option in options if getattr(option, "kind", None) == "allow_once"), None)
+        deny_response = RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        approve_response = (
+            RequestPermissionResponse(outcome=AllowedOutcome(outcome="selected", option_id=allow_option.option_id))
+            if allow_option is not None
+            else deny_response
+        )
+
+        if self.permission_mode == "auto" or not self.run_id:
+            return approve_response
+
+        prompt_id = str(uuid4())
+        if self.on_permission_request is not None:
+            try:
+                tool_summary: dict[str, Any]
+                if hasattr(tool_call, "model_dump"):
+                    tool_summary = tool_call.model_dump(by_alias=True, exclude_none=True)
+                elif isinstance(tool_call, dict):
+                    tool_summary = tool_call
+                else:
+                    tool_summary = {"repr": repr(tool_call)}
+                option_summaries = [
+                    {
+                        "option_id": getattr(opt, "option_id", None),
+                        "kind": getattr(opt, "kind", None),
+                        "label": getattr(opt, "label", None),
+                    }
+                    for opt in options
+                ]
+                await self.on_permission_request(
+                    {
+                        "run_id": self.run_id,
+                        "prompt_id": prompt_id,
+                        "session_id": session_id,
+                        "tool_call": tool_summary,
+                        "options": option_summaries,
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - best effort broadcast
+                logger.debug("permission_required broadcast failed: %s", exc)
+
+        decision = await handle_permission_request(self.run_id, prompt_id, mode=self.permission_mode)
+        outcome = decision.get("outcome") if isinstance(decision, dict) else None
+        if outcome in {"allowed_once", "allow_once", "selected"} and allow_option is not None:
+            return approve_response
+        return deny_response
 
     async def read_text_file(
         self,
@@ -299,6 +399,73 @@ class ReqLensACPClient:
         return None
 
 
+async def discover_agent_models(agent_id: str, *, cwd: pathlib.Path | None = None, timeout_s: int = 60) -> list[str]:
+    """
+    Spawn the agent's CLI just long enough to read `session.models.available_models`.
+
+    Returns the actual model ids the adapter advertises so the UI never asks
+    the user to pick a model the adapter would reject. Returns an empty list
+    when the agent doesn't expose model selection over ACP, or when the SDK
+    isn't installed (mock environment).
+
+    Cached by `core.views.agent_models` with a short TTL so the cold-start
+    cost of `npx --yes <package>` is amortised.
+    """
+    if agent_id not in ACP_AGENTS:
+        raise ACPAgentNotFoundError(f"Agent '{agent_id}' not found in registry")
+
+    spec = ACP_AGENTS[agent_id]
+    missing_env = [k for k in spec.env_required if not os.environ.get(k)]
+    if missing_env:
+        raise ACPEnvMissingError(f"Missing environment variables for {agent_id}: {missing_env}")
+
+    # The Cursor SDK bridge doesn't speak ACP; its catalog lives in the
+    # registry. Returning an empty list signals "use the static catalog".
+    if spec.runner != "acp":
+        return []
+
+    work_dir = cwd or pathlib.Path.cwd()
+
+    try:
+        from acp import spawn_agent_process
+        from acp.schema import (
+            AuthCapabilities,
+            ClientCapabilities,
+            FileSystemCapabilities,
+            Implementation,
+        )
+    except ImportError:
+        # ACP SDK not installed -- fall back to the static catalog.
+        return []
+
+    client = ReqLensACPClient(cwd=work_dir, on_update=None, run_id="discover")
+    try:
+        async with spawn_agent_process(
+            client, spec.command, *spec.args, cwd=str(work_dir), env=os.environ.copy()
+        ) as (conn, _process):
+            await asyncio.wait_for(
+                conn.initialize(
+                    protocol_version=1,
+                    client_capabilities=ClientCapabilities(
+                        auth=AuthCapabilities(terminal=False),
+                        fs=FileSystemCapabilities(read_text_file=True, write_text_file=False),
+                        terminal=False,
+                        field_meta={"terminal_output": True},
+                    ),
+                    client_info=Implementation(name="reqlens-discover", title="ReqLens", version="0.1.0"),
+                ),
+                timeout=timeout_s,
+            )
+            session = await asyncio.wait_for(conn.new_session(cwd=str(work_dir), mcp_servers=[]), timeout=timeout_s)
+            models = getattr(session.models, "available_models", None) if session.models else None
+            return [str(m.model_id) for m in models or [] if getattr(m, "model_id", None)]
+    except asyncio.TimeoutError as exc:
+        raise ACPTimeoutError(f"discover_agent_models({agent_id}) timed out after {timeout_s}s") from exc
+    except Exception as exc:
+        # Surface as ACPError so the view can return a sensible 5xx response.
+        raise ACPError(f"discover_agent_models({agent_id}) failed: {exc}") from exc
+
+
 async def run_acp_prompt(
     agent_id: str,
     *,
@@ -308,6 +475,9 @@ async def run_acp_prompt(
     model_id: str = "",
     timeout_s: int = 600,
     on_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    run_id: str = "",
+    permission_mode: str = "auto",
+    on_permission_request: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ACPResult:
     """
     Send a prompt to an ACP agent and return the structured result.
@@ -369,8 +539,30 @@ async def run_acp_prompt(
 
         logger.info("Spawning ACP agent %s with command: %s %s", agent_id, spec.command, spec.args)
 
-        client = ReqLensACPClient(cwd=cwd, on_update=on_update)
-        async with spawn_agent_process(client, spec.command, *spec.args, cwd=str(cwd)) as (conn, process):
+        client = ReqLensACPClient(
+            cwd=cwd,
+            on_update=on_update,
+            run_id=run_id,
+            permission_mode=permission_mode,
+            on_permission_request=on_permission_request,
+        )
+        # Explicitly forward the parent process env so Bedrock/Vertex/proxy
+        # vars (CLAUDE_CODE_USE_BEDROCK, AWS_*, ANTHROPIC_VERTEX_*, HTTPS_PROXY, ...)
+        # always reach the agent CLI, independent of how the SDK chose to default.
+        # If the user passed a fully-qualified provider model id (e.g. a Bedrock
+        # inference profile like `us.anthropic.claude-opus-4-1-20250805-v1:0`)
+        # that the adapter doesn't advertise via session.models, we pass it as
+        # ANTHROPIC_MODEL so the adapter's env-var fallback picks it up. We
+        # decide AFTER spawn whether to call set_session_model or rely on this
+        # env-var path -- but it's simpler to set the env var unconditionally
+        # for every non-empty model_id and let set_session_model take precedence
+        # when the id is in the advertised list.
+        spawn_env = os.environ.copy()
+        if agent_id == "claude-code" and model_id and model_id not in MODEL_SELECTION_SENTINELS:
+            spawn_env["ANTHROPIC_MODEL"] = model_id
+        async with spawn_agent_process(
+            client, spec.command, *spec.args, cwd=str(cwd), env=spawn_env
+        ) as (conn, process):
             # Initialize the ACP protocol handshake
             await conn.initialize(
                 protocol_version=1,
@@ -384,16 +576,69 @@ async def run_acp_prompt(
             )
             # Create a new agent session scoped to the project directory
             session = await conn.new_session(cwd=str(cwd), mcp_servers=[])
-            if model_id:
+            should_select_model = model_id not in MODEL_SELECTION_SENTINELS
+            if should_select_model:
                 available_models = getattr(session.models, "available_models", None) if session.models else None
                 available_model_ids = [model.model_id for model in available_models or []]
-                if available_model_ids and model_id not in available_model_ids:
-                    raise ACPError(
-                        f"Model '{model_id}' is not available for {agent_id}. Available models: {available_model_ids}"
+                resolved_model_id = _resolve_advertised_model_id(model_id, available_model_ids)
+                if resolved_model_id:
+                    # Model id matches one the adapter advertises -- use the
+                    # ACP-native selection path.
+                    if resolved_model_id != model_id:
+                        logger.info(
+                            "Resolved model '%s' to advertised %s model id '%s'",
+                            model_id,
+                            agent_id,
+                            resolved_model_id,
+                        )
+                    await conn.set_session_model(model_id=resolved_model_id, session_id=session.session_id)
+                elif session.models is None:
+                    # Adapter doesn't expose ACP model selection at all and the
+                    # caller asked for a specific model. Claude Code supports
+                    # ANTHROPIC_MODEL passthrough for direct provider routing;
+                    # other adapters should keep their own default.
+                    if agent_id == "claude-code":
+                        logger.info(
+                            "Agent %s has no ACP model selection; relying on ANTHROPIC_MODEL=%s in subprocess env",
+                            agent_id,
+                            model_id,
+                        )
+                    else:
+                        logger.info("Agent %s has no ACP model selection; using adapter default", agent_id)
+                else:
+                    # Model id is fully-qualified (e.g. a Bedrock inference
+                    # profile like `us.anthropic.claude-opus-4-1-20250805-v1:0`)
+                    # that the adapter's session.models list doesn't advertise.
+                    # Claude Code can route those through ANTHROPIC_MODEL; for
+                    # other adapters, avoid passing provider-specific env vars
+                    # and let the adapter use its default model.
+                    passthrough = agent_id == "claude-code"
+                    logger.info(
+                        "Model '%s' not in %s adapter's advertised list (%s); %s",
+                        model_id,
+                        agent_id,
+                        available_model_ids,
+                        "falling back to ANTHROPIC_MODEL env var"
+                        if passthrough
+                        else "using adapter default",
                     )
-                if session.models is None:
-                    raise ACPError(f"Agent {agent_id} does not expose ACP model selection")
-                await conn.set_session_model(model_id=model_id, session_id=session.session_id)
+                    if on_update:
+                        await on_update(
+                            {
+                                "type": "model_passthrough" if passthrough else "model_unavailable",
+                                "model_id": model_id,
+                                "agent_id": agent_id,
+                                "message": (
+                                    f"Model '{model_id}' is not in the adapter's advertised list. "
+                                    + (
+                                        "Passing it as ANTHROPIC_MODEL so the adapter routes it directly "
+                                        "to the upstream provider (Anthropic / Bedrock / Vertex)."
+                                        if passthrough
+                                        else "Using the adapter default model instead."
+                                    )
+                                ),
+                            }
+                        )
 
             # Combine system and user prompts into a single message
             # (ACP's prompt API takes a list of content blocks)

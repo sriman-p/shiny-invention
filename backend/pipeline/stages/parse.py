@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from acp_client.runner import ACPResult, run_acp_prompt
 from pipeline.contracts import ParseOutput
+from pipeline.few_shot_examples import get_static_examples
 from pipeline.prompts import get_prompt_template
 
 from .base import Stage, StageContext, StageEvent
@@ -70,10 +71,11 @@ class ParseStage(Stage):
         # Format the user prompt with the schema and document content.
         # Empty strings are passed for example fields that may be used
         # by few-shot strategies but are not populated here.
+        examples = get_static_examples(ctx.project_name, self.name, ctx.prompt_strategy)
         user_text = template.format(
             schema=schema,
             document=document,
-            examples="",
+            examples=examples,
             dynamic_examples="",
         )
 
@@ -91,10 +93,16 @@ class ParseStage(Stage):
             system_text=system_text,
             user_text=user_text,
             model_id=ctx.model_id,
+            run_id=ctx.run_id,
+            permission_mode=ctx.permission_mode,
+            on_permission_request=ctx.on_permission_request,
             on_update=lambda update: on_event(
                 StageEvent(type="agent_update", run_id=ctx.run_id, stage=self.name, payload=update)
             ),
         )
+
+        # Forward token usage + normalized reasoning chunks to the orchestrator
+        await self.emit_acp_events(ctx, on_event, result)
 
         # Attempt to parse the agent's response into our structured format
         try:

@@ -20,7 +20,7 @@ validation will fail and the stage will fall back to a safe empty output.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Requirement(BaseModel):
@@ -33,13 +33,13 @@ class Requirement(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    id: str  # Unique identifier (e.g., "REQ-001")
-    title: str  # Short descriptive title
-    description: str  # Full requirement text
+    id: str = Field(min_length=1)  # Unique identifier (e.g., "REQ-001")
+    title: str = Field(min_length=1)  # Short descriptive title
+    description: str = Field(min_length=1)  # Full requirement text
     type: Literal["functional", "non_functional"]  # Whether it describes behavior or a quality attribute
     priority: Literal["high", "medium", "low"]  # Business priority
-    acceptance_criteria: list[str]  # Concrete conditions that must be met
-    source_location: str  # Where in the document this was found (e.g., "requirements.md:L1-5")
+    acceptance_criteria: list[str] = Field(min_length=1)  # Concrete conditions that must be met
+    source_location: str = Field(min_length=1)  # Where in the document this was found
 
 
 class CodeSymbol(BaseModel):
@@ -53,12 +53,12 @@ class CodeSymbol(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    qualified_name: str  # Fully qualified path (e.g., "src.calc.Calculator.add")
+    qualified_name: str = Field(min_length=1)  # Fully qualified path (e.g., "src.calc.Calculator.add")
     kind: Literal["function", "class", "method"]  # Type of symbol
-    file_path: str  # Relative path to the source file
-    line_start: int  # Starting line number in the file
-    line_end: int  # Ending line number in the file
-    signature: str  # Function/method signature string
+    file_path: str = Field(min_length=1)  # Relative path to the source file
+    line_start: int = Field(ge=1)  # Starting line number in the file
+    line_end: int = Field(ge=1)  # Ending line number in the file
+    signature: str = Field(min_length=1)  # Function/method signature string
     docstring: str | None = None  # Docstring if present, None otherwise
 
 
@@ -71,10 +71,10 @@ class ParseOutput(BaseModel):
     as a safe fallback.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     requirements: list[Requirement]  # All requirements extracted from the document
-    raw_token_usage: dict = {}  # Token usage from the agent call (for cost tracking)
+    raw_token_usage: dict = Field(default_factory=dict)  # Token usage from the agent call
 
 
 class AnalyzeOutput(BaseModel):
@@ -86,11 +86,11 @@ class AnalyzeOutput(BaseModel):
     will be matched against requirements in the map stage.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     parse: ParseOutput  # Nested output from the previous stage
     symbols: list[CodeSymbol]  # All discovered functions, classes, and methods
-    project_summary: str  # One-paragraph description of the project
+    project_summary: str = Field(min_length=1)  # One-paragraph description of the project
 
 
 class Mapping(BaseModel):
@@ -102,13 +102,13 @@ class Mapping(BaseModel):
     Evidence snippets are optional code excerpts supporting the mapping.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    requirement_id: str  # ID of the requirement being mapped
+    requirement_id: str = Field(min_length=1)  # ID of the requirement being mapped
     symbol: CodeSymbol | None = None  # The implementing code symbol (None if no match found)
-    confidence: float  # Agent's confidence in this mapping (0.0 to 1.0)
-    rationale: str  # Explanation of why this mapping was chosen
-    evidence_snippets: list[str] = []  # Code excerpts that support this mapping
+    confidence: float = Field(ge=0.0, le=1.0)  # Agent's confidence in this mapping
+    rationale: str = Field(min_length=1)  # Explanation of why this mapping was chosen
+    evidence_snippets: list[str] = Field(default_factory=list)  # Supporting code excerpts
 
 
 class MapOutput(BaseModel):
@@ -119,7 +119,7 @@ class MapOutput(BaseModel):
     linking each requirement to its implementing code symbol.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     analyze: AnalyzeOutput  # Nested output from the previous stage
     mappings: list[Mapping]  # One mapping per requirement
@@ -133,13 +133,13 @@ class GeneratedTest(BaseModel):
     requirement it tests and which code symbol it targets.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    requirement_id: str  # The requirement this test verifies
-    file_path: str  # Suggested file path for the test file
-    code: str  # The actual test source code
+    requirement_id: str = Field(min_length=1)  # The requirement this test verifies
+    file_path: str = Field(min_length=1)  # Suggested file path for the test file
+    code: str = Field(min_length=1)  # The actual test source code
     target_symbol: str | None = None  # The code symbol being tested (if applicable)
-    rationale: str  # Why this test was designed this way
+    rationale: str = Field(min_length=1)  # Why this test was designed this way
 
 
 class GenerateOutput(BaseModel):
@@ -150,7 +150,7 @@ class GenerateOutput(BaseModel):
     test files, one or more per requirement-to-code mapping.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     map: MapOutput  # Nested output from the previous stage
     tests: list[GeneratedTest]  # All generated test files
@@ -166,14 +166,14 @@ class CritiqueScore(BaseModel):
       - reject: test is fundamentally flawed and should be discarded
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    test_file: str  # Path of the test being scored
-    relevance: int  # How relevant the test is to the requirement (1-5)
-    completeness: int  # How thoroughly the test covers the requirement (1-5)
-    correctness: int  # How likely the test is to pass and be valid (1-5)
+    test_file: str = Field(min_length=1)  # Path of the test being scored
+    relevance: int = Field(ge=1, le=5)  # How relevant the test is to the requirement (1-5)
+    completeness: int = Field(ge=1, le=5)  # How thoroughly the test covers the requirement (1-5)
+    correctness: int = Field(ge=1, le=5)  # How likely the test is to pass and be valid (1-5)
     decision: Literal["accept", "revise", "reject"]  # Overall verdict
-    notes: str  # Explanation of the scores and decision
+    notes: str = Field(min_length=1)  # Explanation of the scores and decision
 
 
 class CritiqueOutput(BaseModel):
@@ -184,11 +184,11 @@ class CritiqueOutput(BaseModel):
     for tests that received a "revise" decision.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     generate: GenerateOutput  # Nested output from the previous stage
     scores: list[CritiqueScore]  # One score per generated test
-    revised_tests: list[GeneratedTest] = []  # Improved versions of tests that needed revision
+    revised_tests: list[GeneratedTest] = Field(default_factory=list)  # Improved versions of tests that needed revision
 
 
 class TraceabilityRow(BaseModel):
@@ -200,9 +200,9 @@ class TraceabilityRow(BaseModel):
     requirement has adequate test coverage.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    requirement_id: str  # The requirement being traced
+    requirement_id: str = Field(min_length=1)  # The requirement being traced
     symbol: str | None = None  # The implementing code symbol (if known)
     test_files: list[str]  # Test files that cover this requirement
     coverage_status: Literal["covered", "partial", "uncovered"]  # How well the requirement is tested
@@ -217,8 +217,8 @@ class TraceOutput(BaseModel):
     Markdown document highlighting requirements with insufficient coverage.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     critique: CritiqueOutput  # Nested output from the previous stage
     matrix: list[TraceabilityRow]  # The traceability matrix
-    gap_report_md: str  # Markdown-formatted coverage gap report
+    gap_report_md: str = Field(min_length=1)  # Markdown-formatted coverage gap report

@@ -13,6 +13,7 @@ import {
   FlaskConical,
   FolderOpen,
   ChevronRight,
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -31,6 +32,12 @@ export function AppSidebar() {
     queryKey: ['projects'],
     queryFn: api.getProjects,
   });
+  const { data: backgroundTasks = [] } = useQuery({
+    queryKey: ['background-tasks'],
+    queryFn: api.getBackgroundTasks,
+    refetchInterval: 5_000,
+  });
+  const activeTasks = backgroundTasks.filter((task) => task.status === 'running' && !task.stale).length;
 
   return (
     <aside className="w-60 border-r border-border bg-card/50 flex flex-col shrink-0">
@@ -141,8 +148,34 @@ export function AppSidebar() {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-border">
+      <div className="px-4 py-3 border-t border-border flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground/40">ReqLens v0.1.0</p>
+        <AnimatePresence mode="wait">
+          {activeTasks > 0 ? (
+            <motion.div
+              key="busy"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={springQuick}
+              title={`${activeTasks} background task${activeTasks === 1 ? '' : 's'} running`}
+              className="flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
+            >
+              <Activity className="size-3 animate-pulse" />
+              {activeTasks}
+            </motion.div>
+          ) : (
+            <motion.span
+              key="idle"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-[10px] text-muted-foreground/40"
+            >
+              idle
+            </motion.span>
+          )}
+        </AnimatePresence>
       </div>
     </aside>
   );

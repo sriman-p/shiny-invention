@@ -111,6 +111,7 @@ class StageExecutionSerializer(serializers.ModelSerializer):
             "input_payload",
             "output_payload",
             "raw_updates",
+            "reasoning",
             "error",
             "token_usage",
             "latency_ms",
@@ -221,7 +222,16 @@ class SweepListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sweep
-        fields = ["id", "project", "matrix", "status", "metrics_summary", "stats_report", "created_at"]
+        fields = [
+            "id",
+            "project",
+            "matrix",
+            "status",
+            "metrics_summary",
+            "stats_report",
+            "baseline_summary",
+            "created_at",
+        ]
 
 
 class SweepDetailSerializer(serializers.ModelSerializer):
@@ -233,7 +243,12 @@ class SweepDetailSerializer(serializers.ModelSerializer):
     aggregated statistics.
     """
 
-    runs = SweepRunSerializer(many=True, read_only=True)
+    runs = serializers.SerializerMethodField()
+
+    def get_runs(self, obj: Sweep) -> list[dict]:
+        """Return runs in creation order so indexes align with sweep.matrix."""
+        runs = obj.runs.all().order_by("created_at")
+        return SweepRunSerializer(runs, many=True).data
 
     class Meta:
         model = Sweep
@@ -245,5 +260,6 @@ class SweepDetailSerializer(serializers.ModelSerializer):
             "runs",
             "metrics_summary",
             "stats_report",
+            "baseline_summary",
             "created_at",
         ]

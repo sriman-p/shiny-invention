@@ -10,10 +10,21 @@
 # Usage: make <target>
 # =============================================================================
 
-.PHONY: install dev-backend dev-frontend migrate seed sweep test lint
+.PHONY: help install setup dev run dev-backend dev-frontend build migrate seed sweep test lint
 
 # Django dev server: first attempted port (see dev-backend).
 BACKEND_PORT ?= 8000
+
+help:
+	@echo "ReqLens development commands:"
+	@echo "  make setup         Install dependencies, migrate, and seed sample data"
+	@echo "  make run           Start backend and frontend dev servers"
+	@echo "  make dev           Alias for make run"
+	@echo "  make dev-backend   Start Django API server"
+	@echo "  make dev-frontend  Start Next.js dev server"
+	@echo "  make build         Build the frontend"
+	@echo "  make test          Run backend and frontend tests"
+	@echo "  make lint          Run backend and frontend linters"
 
 # -- Setup & Dependencies ----------------------------------------------------
 
@@ -25,7 +36,14 @@ install:
 	cd backend/acp_client/cursor_sdk && npm install
 	cd frontend && corepack enable && CI=1 pnpm install
 
+# Install dependencies, apply migrations, and seed development data.
+setup: install migrate seed
+
 # -- Development Servers ------------------------------------------------------
+
+# Start the full development stack.
+dev run:
+	$(MAKE) -j2 dev-backend dev-frontend
 
 # Start the Django development server on the first free port in
 # [BACKEND_PORT, BACKEND_PORT + 9] (defaults from 8000) so an old runserver
@@ -37,6 +55,10 @@ dev-backend:
 # Proxies API requests to the backend server.
 dev-frontend:
 	cd frontend && corepack enable && pnpm dev
+
+# Build the frontend for production.
+build:
+	cd frontend && corepack enable && pnpm build
 
 # -- Database -----------------------------------------------------------------
 

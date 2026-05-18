@@ -29,12 +29,18 @@ from . import views
 urlpatterns = [
     # Agent discovery
     path("agents", views.agents_list, name="agents-list"),
+    path("agents/<str:agent_id>/models", views.agent_models, name="agent-models"),
     # Project management
     path("projects", views.projects_list_create, name="projects-list-create"),
     path("projects/<uuid:project_id>", views.project_detail, name="project-detail"),
     path("projects/<uuid:project_id>/agents", views.project_agents_update, name="project-agents-update"),
     path("projects/<uuid:project_id>/runs", views.project_runs_create, name="project-runs-create"),
     path("projects/<uuid:project_id>/sweeps", views.sweeps_create, name="sweeps-create"),
+    path(
+        "projects/<uuid:project_id>/sweeps/preview",
+        views.sweep_preview,
+        name="sweeps-preview",
+    ),
     # Run management
     path("runs", views.runs_list, name="runs-list"),
     path("runs/<uuid:run_id>", views.run_detail, name="run-detail"),
@@ -48,4 +54,5 @@ urlpatterns = [
     path("sweeps/<str:sweep_id>/events", views.sweep_events_stream, name="sweep-events"),
     # Utility
     path("fs/validate", views.fs_validate, name="fs-validate"),
+    path("background-tasks", views.background_tasks_list, name="background-tasks-list"),
 ]

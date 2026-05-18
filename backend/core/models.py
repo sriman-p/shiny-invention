@@ -167,6 +167,12 @@ class StageExecution(BaseModel):
     Stores the input payload sent to the agent, the structured output received,
     any errors, token usage metrics, and timing information. This provides full
     observability into what happened at each step of the pipeline.
+
+    The `raw_updates` field captures the original ACP / Cursor SDK payloads as
+    they stream in (faithful audit trail). The `reasoning` field stores a
+    normalized stream of `ReasoningChunk`-shaped dicts (kind/content/metadata/ts)
+    so the UI can render a Cursor/opencode-grade thought + tool-call timeline
+    without re-parsing the raw payloads.
     """
 
     run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="stages")
@@ -179,6 +185,7 @@ class StageExecution(BaseModel):
     input_payload = models.JSONField(default=dict)
     output_payload = models.JSONField(null=True, blank=True)
     raw_updates = models.JSONField(default=list)
+    reasoning = models.JSONField(default=list)
     error = models.TextField(blank=True, default="")
     token_usage = models.JSONField(default=dict)
     latency_ms = models.IntegerField(null=True, blank=True)
@@ -200,8 +207,10 @@ class Sweep(BaseModel):
     pairwise t-tests) to determine which configuration performs best.
 
     The runs relationship tracks all individual runs spawned by this sweep.
-    metrics_summary stores per-run metrics, and stats_report stores the
-    statistical analysis including ANOVA results and effect sizes.
+    `metrics_summary` stores per-run metrics ranked by quality, `stats_report`
+    stores the ANOVA/pairwise statistical analysis, and `baseline_summary`
+    stores deltas vs. the worst-performing configuration in the sweep so the UI
+    can render a "lift vs worst" view without recomputing on every render.
     """
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="sweeps")
@@ -210,9 +219,44 @@ class Sweep(BaseModel):
     runs = models.ManyToManyField(Run, related_name="sweeps", blank=True)
     metrics_summary = models.JSONField(null=True, blank=True)
     stats_report = models.JSONField(null=True, blank=True)
+    baseline_summary = models.JSONField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
         return f"Sweep {self.id} ({self.status})"
+
+
+class BackgroundTask(BaseModel):
+    """
+    Heartbeat record for a long-running background coroutine (run or sweep).
+
+    Daemon threads spawn the orchestrator with no external supervisor, so a
+    process restart leaves Run/Sweep rows stuck in `running`. This record gives
+    `core.apps.CoreConfig.ready()` a way to detect tasks whose heartbeat is
+    stale (>5 minutes) and mark the related Run / Sweep as `failed` on startup.
+
+    Fields:
+        kind: "run" or "sweep" — which entity this task drives.
+        related_id: UUID of the related Run or Sweep, stored as a string so the
+            same table can serve both kinds without polymorphic FKs.
+        status: lifecycle status ("running", "succeeded", "failed", "cancelled").
+        last_heartbeat: refreshed every ~5s while the task is alive.
+        pid: optional OS process id of the worker thread's host process.
+    """
+
+    BG_TASK_KINDS = [("run", "Run"), ("sweep", "Sweep")]
+
+    kind = models.CharField(max_length=10, choices=BG_TASK_KINDS)
+    related_id = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=20, choices=RUN_STATUS_CHOICES, default="running")
+    last_heartbeat = models.DateTimeField(auto_now_add=True)
+    pid = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-last_heartbeat"]
+        indexes = [models.Index(fields=["status", "last_heartbeat"])]
+
+    def __str__(self) -> str:
+        return f"BackgroundTask {self.kind}/{self.related_id} ({self.status})"
