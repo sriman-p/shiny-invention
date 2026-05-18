@@ -3,6 +3,7 @@
 
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
 \usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{textcomp}
@@ -32,7 +33,7 @@ to help map requirements to implementation code. The evaluation uses three
 Python benchmark projects and a 16-configuration matrix of prompt strategies
 and context modes. The reported results show that the six-stage pipeline
 achieves 80 percent traceability compared with about 45 percent for single-pass
-generation. The best configuration reaches 87 percent traceability, and
+generation. The best configuration reaches 86 percent traceability, and
 hybrid retrieval achieves 100 percent precision at 3. These results show that
 agent-based test generation can be made more auditable by preserving
 requirement-to-test provenance.
@@ -255,12 +256,28 @@ best matched by keyword evidence in a division method. ReqLens combines dense
 and sparse scores using alpha equal to 0.6, meaning dense retrieval receives
 slightly more weight than keyword retrieval.
 
-The combined retrieval score can be described as a weighted sum of normalized
-dense and sparse scores. Dense retrieval helps when the requirement uses
-conceptual language, while BM25 helps when the requirement mentions names,
-error classes, or API terms that appear directly in code. The alpha value of
-0.6 reflects this balance. It gives semantic similarity a leading role while
-preserving strong keyword evidence.
+Formally, for a requirement query $q$ and a candidate code chunk $c$, the
+hybrid relevance score is a convex combination of min-max normalized dense and
+sparse components:
+\begin{equation}
+S(q,c) = \alpha \, \widehat{s}_{\text{dense}}(q,c) + (1-\alpha)\,
+\widehat{s}_{\text{bm25}}(q,c),
+\label{eq:hybrid}
+\end{equation}
+where $\widehat{s}_{\text{dense}}$ is the cosine similarity between the
+sentence-transformer embeddings of $q$ and $c$ after min-max normalization
+over the candidate set, $\widehat{s}_{\text{bm25}}$ is the analogously
+normalized BM25 score, and $\alpha = 0.6$. Normalizing each component before
+the weighted sum prevents either retriever from dominating purely because of
+score scale. The top-$k$ chunks ranked by Eq.~\eqref{eq:hybrid} are passed to
+the Map stage as candidate evidence, with $k=3$ in the reported evaluation.
+
+The combined retrieval score is therefore a weighted sum of normalized dense
+and sparse scores. Dense retrieval helps when the requirement uses conceptual
+language, while BM25 helps when the requirement mentions names, error classes,
+or API terms that appear directly in code. The alpha value of 0.6 reflects
+this balance. It gives semantic similarity a leading role while preserving
+strong keyword evidence.
 
 \subsection{Prompt Strategies and Context Modes}
 ReqLens evaluates four prompt strategies. Zero-shot prompting gives the agent a
@@ -350,7 +367,7 @@ is validated and passed to later stages.}
 \begin{table}[htbp]
 \caption{ReqLens Pipeline Stages}
 \begin{center}
-\begin{tabular}{|p{0.16\columnwidth}|p{0.31\columnwidth}|p{0.39\columnwidth}|}
+\begin{tabular}{|p{0.15\columnwidth}|p{0.30\columnwidth}|p{0.37\columnwidth}|}
 \hline
 \textbf{Stage} & \textbf{Output} & \textbf{Purpose} \\
 \hline
@@ -457,6 +474,46 @@ a valid Generate output with a rejected Critique decision indicates a test
 quality problem. ReqLens therefore separates formatting failures, reasoning
 failures, and coverage gaps.
 
+\subsection{Orchestration Algorithm}
+Algorithm~\ref{alg:orchestrate} summarizes how the orchestrator drives the six
+stages. The loop is sequential because every stage consumes the validated
+output of the previous one. Retrieval is invoked only for the Map stage, and a
+bounded retry is used when an agent returns an artifact that fails its
+contract. The provenance object is threaded through every stage so the final
+trace matrix carries the full chain of evidence.
+
+\begin{algorithm}[htbp]
+\caption{ReqLens pipeline orchestration}
+\label{alg:orchestrate}
+\begin{algorithmic}[1]
+\STATE \textbf{Input:} requirements doc $D$, code dir $C$, config $(\pi,\mu)$
+\STATE \textbf{Output:} trace matrix $T$, gap report $G$
+\STATE $R \leftarrow \textsc{Parse}(D)$;\quad validate $R$
+\STATE $Y \leftarrow \textsc{Analyze}(C)$;\quad validate $Y$
+\STATE $E \leftarrow \emptyset$
+\FOR{each requirement $r \in R$}
+  \STATE $E[r] \leftarrow \textsc{HybridRetrieve}(r, Y, k{=}3)$ \COMMENT{Eq.~\eqref{eq:hybrid}}
+\ENDFOR
+\STATE $M \leftarrow \textsc{Map}(R, Y, E, \pi, \mu)$;\quad validate $M$
+\STATE $\mathit{Ts} \leftarrow \textsc{Generate}(M, \pi, \mu)$;\quad validate $\mathit{Ts}$
+\FOR{each test $t \in \mathit{Ts}$}
+  \STATE $(\text{score}, d) \leftarrow \textsc{Critique}(t)$
+  \IF{$d = \textbf{revise}$}
+    \STATE $t \leftarrow \textsc{Generate}(\{t\}, \pi, \mu)$ \COMMENT{bounded retry}
+  \ELSIF{$d = \textbf{reject}$}
+    \STATE mark $t$ as not accepted
+  \ENDIF
+\ENDFOR
+\STATE $(T, G) \leftarrow \textsc{Trace}(R, M, \mathit{Ts})$
+\RETURN $(T, G)$
+\end{algorithmic}
+\end{algorithm}
+
+Any uncaught contract violation aborts the run with a stage-attributed error
+instead of producing a misleading trace matrix. This fail-explicit behavior is
+deliberate: a missing or malformed artifact is reported as a gap rather than
+silently dropped, which keeps the final traceability evidence honest.
+
 \section{Experimental Evaluation}
 The experimental evaluation measures whether ReqLens improves traceability,
 which prompt/context configurations perform best, and whether hybrid retrieval
@@ -519,7 +576,7 @@ styles.
 \begin{table}[htbp]
 \caption{Benchmark Projects}
 \begin{center}
-\begin{tabular}{|l|c|c|l|}
+\begin{tabular}{|p{0.18\columnwidth}|c|c|p{0.34\columnwidth}|}
 \hline
 \textbf{Project} & \textbf{Reqs.} & \textbf{Symbols} & \textbf{Behavior} \\
 \hline
@@ -574,10 +631,10 @@ substantially improved over the baseline.
 
 \subsection{Result Analysis for RQ2 and RQ3}
 Fig.~\ref{fig:heatmap} shows the traceability heatmap from the presentation.
-The weakest reported configuration is zero-shot with minimal context, with 52
+The weakest reported configuration is zero-shot with minimal context, with 53
 percent traceability and 45 percent critique accept rate. The strongest
-reported configuration is few-shot dynamic with full context, with 87 percent
-traceability and 84 percent critique accept rate. This is a 35 percentage
+reported configuration is few-shot dynamic with full context, with 86 percent
+traceability and 84 percent critique accept rate. This is a 33 percentage
 point improvement in traceability and a 39 percentage point improvement in
 accept rate.
 
@@ -603,9 +660,15 @@ runs and reserve full context for difficult requirements or final audit runs.
 
 Fig.~\ref{fig:strategy} compares prompt strategies using traceability, accept
 rate, and latency. Fig.~\ref{fig:stats} summarizes the statistical analysis.
-The presentation reports that strategy choice is statistically significant
-with $p < 0.05$ and that pairwise comparisons show meaningful differences
-between zero-shot and few-shot dynamic prompting.
+A one-way ANOVA over the four strategies yields $F = 1.650$ with
+$p = 0.2303$, which is not statistically significant at the $0.05$ level, and
+all Bonferroni-corrected pairwise comparisons remain non-significant
+($p \geq 0.42$). However, the estimated effect sizes are large, for example
+$d = 1.70$ for zero-shot versus few-shot dynamic. The most consistent reading
+is that the observed trend favors few-shot dynamic prompting with a large
+effect size, but the small three-project benchmark does not provide enough
+statistical power to confirm significance. This is treated as a limitation
+rather than a positive significance claim.
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{figures/strategy_comparison.png}}
@@ -779,6 +842,35 @@ that an output has the right shape, but it cannot guarantee semantic
 correctness. ReqLens reduces this risk through retrieval, critique, and gap
 reporting, but human review remains important for high-stakes software.
 
+\subsection{Threats to Validity}
+Following standard empirical software engineering practice, the limitations
+above can be organized as explicit threats to validity.
+
+\textit{Internal validity.} The dependent metrics are computed from the stored
+structured artifacts rather than from independent human judgment. A flaw in
+the metric implementation could bias all configurations in the same direction.
+This threat is mitigated by the contract and evaluation tests in
+Table~\ref{tab:tests}, which check that metrics, ANOVA, and t-tests are
+computed consistently, but it is not fully eliminated.
+
+\textit{External validity.} The three benchmark projects are small and
+Python-only, so the reported numbers may not generalize to large,
+multi-language, or domain-specific codebases. Larger requirement sets could
+degrade retrieval precision and produce longer prompts, which may change the
+ranking of prompt strategies and context modes.
+
+\textit{Construct validity.} Traceability score and strict coverage are
+structural proxies for the real goal, which is whether a test meaningfully
+verifies a requirement. A test can be marked covered while still using weak
+assertions. The Critique stage partially addresses this gap, but a structural
+metric cannot fully capture semantic adequacy.
+
+\textit{Conclusion validity.} The strategy comparison does not reach
+statistical significance ($p = 0.2303$) even though the effect sizes are
+large. With only three benchmark projects the analysis is underpowered, so
+the results should be read as a strong observed trend rather than as a
+confirmed effect for arbitrary projects.
+
 \section{Conclusion}
 This paper presented ReqLens, a requirement-traced test generation system that
 turns AI-assisted test generation into an auditable workflow. The system reads
@@ -789,7 +881,7 @@ generates and critiques tests, and produces a final traceability matrix.
 The results support several findings. First, decomposition works: the
 six-stage pipeline achieved 80 percent traceability compared with about 45
 percent for single-pass generation. Second, prompt strategy matters:
-few-shot dynamic with full context reached 87 percent traceability and 84
+few-shot dynamic with full context reached 86 percent traceability and 84
 percent critique accept rate. Third, context helps, but it introduces
 quality-cost trade-offs. Fourth, hybrid retrieval is precise for the benchmark
 queries, reaching 100 percent precision at 3. Fifth, critique improves
