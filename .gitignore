@@ -218,6 +218,20 @@ out/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Local-only project writeups, papers, exports, and generated analysis artifacts
+IEEE-conference-template-062824/
+IEEE-conference-template-062824.zip
+docs/
+BACKEND_ARCHITECTURE.md
+PROJECT_OVERVIEW.md
+REQLENS_PRESENTER_NOTES.md
+SWEEP_04f785b4_ANALYSIS.md
+final_paper.md
+output.md
+paper_results_presentation.md
+reqlens_equal_contributions.md
+frontend/CLAUDE.md
 .pnpm-debug.log*
 
 # Ruff stuff:
